@@ -183,6 +183,23 @@ export class CheckpointService extends Context.Tag("cockpit/CheckpointService")<
       workspace: Workspace,
       checkpointId: CheckpointId,
     ) => Effect.Effect<void, WorkspaceError>
+    /** Paths a block or attempt has touched since the last checkpoint; empty means it changed nothing. */
+    readonly changedFiles: (
+      workspace: Workspace,
+    ) => Effect.Effect<ReadonlyArray<string>, WorkspaceError>
+    /**
+     * Keeps whatever a failed attempt left behind, or nothing when it changed nothing. Inspection
+     * and commit share one lock so no other checkpoint can land between them, and the commit is
+     * tagged: a rollback right after it would otherwise leave the work unreachable.
+     */
+    readonly salvage: (
+      workspace: Workspace,
+      input: {
+        readonly message: string
+        readonly blockId: BlockId
+        readonly attemptId: AttemptId
+      },
+    ) => Effect.Effect<CheckpointId | undefined, WorkspaceError | JournalError>
   }
 >() {}
 
@@ -193,51 +210,78 @@ export const CheckpointServiceLive = Layer.effect(
     const sql = yield* SqlClient.SqlClient
     const git = yield* boundGit
 
+    // ponytail: one lock across every worktree. Parallel branches of a run share one worktree and
+    // git serializes on .git/index.lock regardless; make it per-worktree if runs ever overlap.
+    const gitLock = yield* Effect.makeSemaphore(1)
+
+    // -z: a path containing a space or a newline still arrives as one record.
+    const changed = (workspace: Workspace) =>
+      Effect.map(git("checkpoint", workspace.path, "status", "--porcelain", "-z"), (out) => {
+        const records = out.split("\0")
+        const paths: string[] = []
+        for (let index = 0; index < records.length; index += 1) {
+          const record = records[index]
+          if (record === "") continue
+          paths.push(record.slice(3))
+          // A rename or copy spends two records: the new path, then the one it came from.
+          if (record[0] === "R" || record[0] === "C") index += 1
+        }
+        return paths
+      })
+
+    /** Unlocked on purpose: `salvage` composes this with an inspection under one critical section. */
+    const commitAll = (workspace: Workspace, input: CheckpointInput) =>
+      Effect.gen(function* () {
+        const previousHead = yield* git("checkpoint", workspace.path, "rev-parse", "HEAD")
+        yield* git("checkpoint", workspace.path, "add", "-A")
+        // Checkpoints are engine bookkeeping, not user commits: signing would block on a GUI
+        // pinentry, the project's hooks would run on every attempt, and the machine need not
+        // have a git identity. --allow-empty keeps the chain unbroken when a block changed nothing.
+        yield* git(
+          "checkpoint",
+          workspace.path,
+          "-c",
+          "commit.gpgsign=false",
+          "-c",
+          "user.name=Cockpit",
+          "-c",
+          "user.email=cockpit@localhost",
+          "commit",
+          "--no-verify",
+          "--allow-empty",
+          "-m",
+          input.message,
+        )
+        const sha = CheckpointId.make(yield* git("checkpoint", workspace.path, "rev-parse", "HEAD"))
+        yield* journal
+          .recordCheckpoint({
+            checkpointId: sha,
+            runId: workspace.runId,
+            blockId: input.blockId,
+            attemptId: input.attemptId,
+            kind: input.kind,
+          })
+          // A commit the journal never accepted would leave the branch ahead of the record
+          // that is supposed to explain it.
+          .pipe(
+            Effect.onError(() =>
+              Effect.ignore(git("checkpoint", workspace.path, "reset", "--hard", previousHead)),
+            ),
+          )
+        return sha
+      })
+
     return {
-      checkpoint: (workspace, input) =>
+      checkpoint: (workspace, input) => commitAll(workspace, input).pipe(gitLock.withPermits(1)),
+
+      salvage: (workspace, input) =>
         Effect.gen(function* () {
-          const previousHead = yield* git("checkpoint", workspace.path, "rev-parse", "HEAD")
-          yield* git("checkpoint", workspace.path, "add", "-A")
-          // Checkpoints are engine bookkeeping, not user commits: signing would block on a GUI
-          // pinentry, the project's hooks would run on every attempt, and the machine need not
-          // have a git identity. --allow-empty keeps the chain unbroken when a block changed nothing.
-          yield* git(
-            "checkpoint",
-            workspace.path,
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "user.name=Cockpit",
-            "-c",
-            "user.email=cockpit@localhost",
-            "commit",
-            "--no-verify",
-            "--allow-empty",
-            "-m",
-            input.message,
-          )
-          const sha = CheckpointId.make(
-            yield* git("checkpoint", workspace.path, "rev-parse", "HEAD"),
-          )
-          yield* journal
-            .recordCheckpoint({
-              checkpointId: sha,
-              runId: workspace.runId,
-              blockId: input.blockId,
-              attemptId: input.attemptId,
-              kind: input.kind,
-            })
-            // A commit the journal never accepted would leave the branch ahead of the record
-            // that is supposed to explain it.
-            .pipe(
-              Effect.onError(() =>
-                Effect.ignore(
-                  git("checkpoint", workspace.path, "reset", "--hard", previousHead),
-                ),
-              ),
-            )
+          const paths = yield* changed(workspace)
+          if (paths.length === 0) return undefined
+          const sha = yield* commitAll(workspace, { ...input, kind: "salvage" })
+          yield* git("checkpoint", workspace.path, "tag", `cockpit/salvage/${input.attemptId}`, sha)
           return sha
-        }),
+        }).pipe(gitLock.withPermits(1)),
 
       rollbackTo: (workspace, checkpointId) =>
         Effect.gen(function* () {
@@ -260,7 +304,9 @@ export const CheckpointServiceLive = Layer.effect(
           }
           // ^{commit} so a tag or tree sharing the id can never be reset onto.
           yield* git("rollback", workspace.path, "reset", "--hard", `${checkpointId}^{commit}`)
-        }),
+        }).pipe(gitLock.withPermits(1)),
+
+      changedFiles: (workspace) => changed(workspace).pipe(gitLock.withPermits(1)),
     }
   }),
 )

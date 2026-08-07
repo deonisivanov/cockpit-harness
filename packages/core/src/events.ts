@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AttemptId, BlockId, CheckpointId, EventSeq, RunId, SessionId } from "./ids.js"
+import { ArtifactId, AttemptId, BlockId, CheckpointId, EventSeq, RunId, SessionId } from "./ids.js"
 
 export const RunStatus = Schema.Literal(
   "created",
@@ -35,6 +35,10 @@ export type AttemptVerdict = typeof AttemptVerdict.Type
 export const CheckpointKind = Schema.Literal("success", "salvage")
 export type CheckpointKind = typeof CheckpointKind.Type
 
+/** Technical failures get a backoff schedule; semantic ones get a new attempt with feedback. */
+export const ErrorClass = Schema.Literal("technical", "semantic")
+export type ErrorClass = typeof ErrorClass.Type
+
 /** Emitted only by Journal's guarded transitions, so the log cannot narrate a state the tables never took. */
 export const LifecyclePayload = Schema.Union(
   Schema.TaggedStruct("RunCreated", { projectId: Schema.String, prompt: Schema.String }),
@@ -57,8 +61,21 @@ export const LifecyclePayload = Schema.Union(
     checkpointId: CheckpointId,
     kind: CheckpointKind,
   }),
+  Schema.TaggedStruct("ArtifactCreated", {
+    artifactId: ArtifactId,
+    kind: Schema.String,
+    path: Schema.String,
+    bytes: Schema.Int,
+  }),
 )
 export type LifecyclePayload = typeof LifecyclePayload.Type
+
+export const CriterionResult = Schema.Struct({
+  criterion: Schema.String,
+  passed: Schema.Boolean,
+  evidenceRef: Schema.optional(ArtifactId),
+})
+export type CriterionResult = typeof CriterionResult.Type
 
 /** Free-form events any service may append; they never move the state machine. */
 export const AncillaryPayload = Schema.Union(
@@ -67,7 +84,6 @@ export const AncillaryPayload = Schema.Union(
     signature: Schema.String,
     message: Schema.String,
   }),
-  // Output is not carried here: contracts §9 puts it behind artifact refs, which land in Phase 4.
   Schema.TaggedStruct("CommandExecuted", {
     argv: Schema.Array(Schema.String),
     /** `null` when the child was killed or lost before reporting a status; `timedOut` says which. */
@@ -76,6 +92,48 @@ export const AncillaryPayload = Schema.Union(
     durationMs: Schema.Int,
     success: Schema.Boolean,
   }),
+  Schema.TaggedStruct("TreeValidated", {
+    errors: Schema.Array(
+      Schema.Struct({
+        rule: Schema.String,
+        path: Schema.Array(Schema.String),
+        message: Schema.String,
+      }),
+    ),
+  }),
+  Schema.TaggedStruct("PromptComposed", { promptRef: ArtifactId }),
+  Schema.TaggedStruct("SessionStarted", { sessionId: SessionId }),
+  Schema.TaggedStruct("SessionResumed", { sessionId: SessionId }),
+  Schema.TaggedStruct("AgentActivity", {
+    activity: Schema.String,
+    detail: Schema.optional(Schema.String),
+  }),
+  // Raw output lives in the artifact behind `ref`; the journal keeps only the excerpt.
+  Schema.TaggedStruct("OutputChunk", {
+    streamKind: Schema.Literal("stdout", "stderr", "assistant"),
+    excerpt: Schema.String,
+    ref: Schema.optional(ArtifactId),
+  }),
+  // The artifact holds the result in full; the inline copy is present only when it is small
+  // enough that a reader of the log alone can still see what the block produced.
+  Schema.TaggedStruct("ResultProduced", {
+    outputRef: Schema.optional(ArtifactId),
+    outputInline: Schema.optional(Schema.Unknown),
+  }),
+  Schema.TaggedStruct("QuestionAsked", { question: Schema.String }),
+  Schema.TaggedStruct("ApprovalRequested", { gateId: BlockId, payloadRef: ArtifactId }),
+  Schema.TaggedStruct("ApprovalDecided", {
+    gateId: BlockId,
+    approved: Schema.Boolean,
+    note: Schema.optional(Schema.String),
+  }),
+  Schema.TaggedStruct("RetryScheduled", {
+    class: ErrorClass,
+    nextAttempt: Schema.Int,
+    delayMs: Schema.Int,
+  }),
+  Schema.TaggedStruct("VerificationReported", { criteria: Schema.Array(CriterionResult) }),
+  Schema.TaggedStruct("FailureFeedbackForwarded", { packetRef: ArtifactId }),
 )
 export type AncillaryPayload = typeof AncillaryPayload.Type
 

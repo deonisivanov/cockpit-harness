@@ -5,8 +5,7 @@ import { JournalError, ProcessError } from "./errors.js"
 import { AttemptId, BlockId, RunId } from "./ids.js"
 import { Journal } from "./Journal.js"
 import { ProcessSupervisor } from "./ProcessSupervisor.js"
-
-const outputBudgetChars = 1_048_576
+import { clip, outputBudget } from "./text.js"
 
 const RegexSource = Schema.String.pipe(
   Schema.filter(
@@ -77,28 +76,22 @@ interface Captured {
   readonly truncated: boolean
 }
 
-/** Cutting at the budget can split a surrogate pair, and a lone half corrupts the whole artifact. */
-const wholeCodePoints = (text: string) => {
-  const last = text.charCodeAt(text.length - 1)
-  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text
-}
-
 const capture = (stream: Stream.Stream<Uint8Array, ProcessError>) =>
   stream.pipe(
     Stream.decodeText(),
     Stream.runFold({ text: "", truncated: false } as Captured, (acc, chunk) => {
-      const room = outputBudgetChars - acc.text.length
+      const room = outputBudget - acc.text.length
       if (room <= 0) return { text: acc.text, truncated: true }
       return chunk.length <= room
         ? { text: acc.text + chunk, truncated: acc.truncated }
-        : { text: acc.text + wholeCodePoints(chunk.slice(0, room)), truncated: true }
+        : { text: acc.text + clip(chunk, room), truncated: true }
     }),
   )
 
-const escapesWorktree = (pattern: string) =>
+export const escapesWorktree = (pattern: string) =>
   NodePath.isAbsolute(pattern) || pattern.split(/[/\\]/).includes("..")
 
-const artifactExists = (cwd: string, pattern: string) =>
+export const artifactExists = (cwd: string, pattern: string) =>
   escapesWorktree(pattern)
     ? Effect.fail(
         new ProcessError({

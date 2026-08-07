@@ -14,7 +14,7 @@ import {
   RunStatus,
 } from "./events.js"
 import { JournalError } from "./errors.js"
-import { AttemptId, BlockId, CheckpointId, EventSeq, RunId, SessionId } from "./ids.js"
+import { ArtifactId, AttemptId, BlockId, CheckpointId, EventSeq, RunId, SessionId } from "./ids.js"
 
 export interface CreateRunInput {
   readonly runId: RunId
@@ -53,6 +53,16 @@ export interface RecordCheckpointInput {
   readonly blockId?: BlockId
   readonly attemptId?: AttemptId
   readonly kind: CheckpointKind
+}
+
+export interface RecordArtifactInput {
+  readonly artifactId: ArtifactId
+  readonly runId: RunId
+  readonly blockId?: BlockId
+  readonly attemptId?: AttemptId
+  readonly kind: string
+  readonly path: string
+  readonly bytes: number
 }
 
 export class Journal extends Context.Tag("cockpit/Journal")<
@@ -101,6 +111,7 @@ export class Journal extends Context.Tag("cockpit/Journal")<
     readonly recordCheckpoint: (
       input: RecordCheckpointInput,
     ) => Effect.Effect<void, JournalError>
+    readonly recordArtifact: (input: RecordArtifactInput) => Effect.Effect<void, JournalError>
   }
 >() {}
 
@@ -263,7 +274,11 @@ export const JournalLive = Layer.effect(
         }
       })
 
-    const requireAbsent = (op: string, table: "runs" | "blocks" | "attempts", id: string) =>
+    const requireAbsent = (
+      op: string,
+      table: "runs" | "blocks" | "attempts" | "artifacts",
+      id: string,
+    ) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ id: string }>`
           SELECT id FROM ${sql(table)} WHERE id = ${id}`
@@ -526,6 +541,40 @@ export const JournalLive = Layer.effect(
                 _tag: "CheckpointCreated",
                 checkpointId: input.checkpointId,
                 kind: input.kind,
+              } as const,
+            }
+          }),
+        ),
+
+      recordArtifact: (input) =>
+        commitVoid(
+          "recordArtifact",
+          Effect.gen(function* () {
+            yield* requireRunStatus("recordArtifact", input.runId, ["running"])
+            yield* requireAbsent("recordArtifact", "artifacts", input.artifactId)
+            // No parent join, unlike checkpoints: an approval payload belongs to a gate, and a
+            // gate has an id without ever becoming a block row.
+            const ts = yield* nowIso
+            yield* sql`
+              INSERT INTO artifacts (id, run_id, kind, path, bytes, created_at)
+              VALUES (
+                ${input.artifactId},
+                ${input.runId},
+                ${input.kind},
+                ${input.path},
+                ${input.bytes},
+                ${ts}
+              )`
+            return {
+              runId: input.runId,
+              blockId: input.blockId,
+              attemptId: input.attemptId,
+              payload: {
+                _tag: "ArtifactCreated",
+                artifactId: input.artifactId,
+                kind: input.kind,
+                path: input.path,
+                bytes: input.bytes,
               } as const,
             }
           }),

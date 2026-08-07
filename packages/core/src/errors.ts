@@ -22,6 +22,12 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
   detail: Schema.String,
 }) {}
 
+export class ValidationError extends Schema.TaggedError<ValidationError>()("ValidationError", {
+  rule: Schema.String,
+  path: Schema.Array(Schema.String),
+  message: Schema.String,
+}) {}
+
 export class DaemonError extends Schema.TaggedError<DaemonError>()("DaemonError", {
   op: Schema.Literal("home", "lock"),
   detail: Schema.String,

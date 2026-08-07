@@ -1,11 +1,13 @@
 import { NodeContext } from "@effect/platform-node"
 import { SqlClient } from "@effect/sql"
 import { ConfigProvider, Effect, Layer, Scope, Stream } from "effect"
-import { mkdtemp, rm } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as NodePath from "node:path"
 import { afterAll } from "vitest"
 import {
+  ArtifactStore,
   CheckpointService,
   ClaudeCodeProvider,
   ClaudeCodeProviderLive,
@@ -13,6 +15,7 @@ import {
   CodexProviderLive,
   CommandRunner,
   DaemonLockLive,
+  EngineLive,
   EventBus,
   EventPayload,
   EventSeq,
@@ -20,7 +23,9 @@ import {
   KernelLive,
   ProcessSupervisor,
   ProcessSupervisorLive,
+  RetryCoordinator,
   RunId,
+  WorkflowEngine,
   WorkspaceManager,
 } from "../src/index.js"
 
@@ -86,6 +91,38 @@ export const node = (script: string) =>
 
 export const withKernel = async <A, E>(body: Effect.Effect<A, E, KernelContext>) =>
   runKernel(await tempHome(), body)
+
+export type EngineContext =
+  | KernelContext
+  | ArtifactStore
+  | RetryCoordinator
+  | WorkflowEngine
+
+export const engineLayer = (home: string, settings: Settings = {}) =>
+  EngineLive.pipe(Layer.provide(NodeContext.layer), Layer.provide(configuredHome(home, settings)))
+
+export const runEngine = <A, E>(
+  home: string,
+  body: Effect.Effect<A, E, EngineContext>,
+  settings: Settings = {},
+) => Effect.runPromise(Effect.scoped(Effect.provide(body, engineLayer(home, settings))))
+
+// Cockpit spawns git with the parent environment, so blanking these is what keeps a developer's
+// own git config out of the fixtures.
+process.env.GIT_CONFIG_GLOBAL = "/dev/null"
+process.env.GIT_CONFIG_SYSTEM = "/dev/null"
+
+export const makeRepo = async () => {
+  const repoPath = await tempDir("cockpit-repo-")
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, encoding: "utf8" })
+  git("init", "-b", "main")
+  git("config", "user.email", "fixture@example.com")
+  git("config", "user.name", "Fixture")
+  await writeFile(NodePath.join(repoPath, "app.txt"), "base\n")
+  git("add", "-A")
+  git("commit", "-m", "base")
+  return { repoPath, baseCommit: git("rev-parse", "HEAD").trim() }
+}
 
 export const readEvents = (runId: RunId, limit?: number) =>
   Effect.flatMap(Journal, (journal) =>

@@ -80,8 +80,9 @@ interface BlockDef<I, O> {
   id: string
   kind: "agent" | "command"
   title: string
-  input: Schema<I>                  // envelope fields this block sees — nothing more
-  output: Schema<O>                 // agent blocks: written to $COCKPIT_OUTPUT as JSON
+  input: ContractField[]            // settled in Phase 4: {name, type, required} list — journal/UI-serializable,
+  output: ContractField[]           // structurally comparable by the validator; runtime Schema derived from it.
+                                    // Agent blocks: output written to $COCKPIT_OUTPUT as JSON
   provider?: "claude-code" | "codex"        // agent blocks
   binding?: PluginBinding                    // agent blocks, optional
   promptTemplate?: string                    // agent blocks; rendered with input + failure packet
@@ -178,7 +179,6 @@ interface RetryContext {             // what a retrying attempt actually receive
 interface RetryPolicy {
   id: string
   maxAttempts: number
-  attemptTimeoutMs: number
   loopTimeoutMs: number
   retryable: ErrorClass[]            // "technical" subclasses get Schedule backoff, don't consume semantic attempts
   nonRetryable: ErrorClass[]         // immediate stop
@@ -189,6 +189,10 @@ interface RetryPolicy {
   noProgress: { sameFailureSignatureLimit: number }   // identical signature twice by default → stop + gate
   checkpointEachAttempt: boolean     // salvage checkpoints for useful failed attempts
   onRetry: "rollback" | "continue"   // rollback → git reset to pre-attempt checkpoint
+  contextBudgetChars: number         // settled in Phase 4: per-block retry-context budget (plan §8)
+  // settled in Phase 4: stopImmediately, policy-level successCriteria and attemptTimeoutMs dropped
+  // for v1 (no detectors, duplicated block-level criteria, and BlockDef.timeoutMs already bounds an
+  // attempt); technical-retry bound is an engine constant
   // v2 reserved: providerSwitch?, bindingSwitch?
 }
 ```
