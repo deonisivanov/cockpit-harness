@@ -10,6 +10,13 @@ export default tseslint.config(
   {
     // Plain-JS scripts run directly by node; TS files get their globals from @types/node.
     files: ["**/*.mjs"],
-    languageOptions: { globals: { process: "readonly" } },
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        process: "readonly",
+        setInterval: "readonly",
+        setTimeout: "readonly",
+      },
+    },
   },
 )

@@ -67,6 +67,15 @@ export const AncillaryPayload = Schema.Union(
     signature: Schema.String,
     message: Schema.String,
   }),
+  // Output is not carried here: contracts §9 puts it behind artifact refs, which land in Phase 4.
+  Schema.TaggedStruct("CommandExecuted", {
+    argv: Schema.Array(Schema.String),
+    /** `null` when the child was killed or lost before reporting a status; `timedOut` says which. */
+    exitCode: Schema.NullOr(Schema.Int),
+    timedOut: Schema.Boolean,
+    durationMs: Schema.Int,
+    success: Schema.Boolean,
+  }),
 )
 export type AncillaryPayload = typeof AncillaryPayload.Type
 

@@ -1,8 +1,20 @@
 import { Schema } from "effect"
+import { SessionId } from "./ids.js"
 
 export class JournalError extends Schema.TaggedError<JournalError>()("JournalError", {
   op: Schema.String,
   detail: Schema.String,
+}) {}
+
+export class ProcessError extends Schema.TaggedError<ProcessError>()("ProcessError", {
+  kind: Schema.Literal("spawn", "io", "timeout"),
+  detail: Schema.String,
+}) {}
+
+export class ProviderError extends Schema.TaggedError<ProviderError>()("ProviderError", {
+  kind: Schema.Literal("spawn", "crash", "parse", "timeout"),
+  detail: Schema.String,
+  sessionId: Schema.optional(SessionId),
 }) {}
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
