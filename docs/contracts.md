@@ -6,7 +6,7 @@ Effect Schema sketches for the core contracts. Illustrative, not final code: fie
 
 ```ts
 type RunId = string & Brand<"RunId">        // uuid
-type BlockId = string & Brand<"BlockId">    // stable within a tree
+type BlockId = string & Brand<"BlockId">    // per-run block instance id; the template's block id lives in blocks.def_id (settled in Phase 2)
 type AttemptId = string & Brand<"AttemptId">
 type SessionId = string & Brand<"SessionId">  // Cockpit-assigned, passed to the provider CLI
 type CheckpointId = string & Brand<"CheckpointId">  // git sha
@@ -21,7 +21,7 @@ class PreflightError    { reason: "provider-unavailable" | "plugin-missing" | "e
                           | "version-incompatible" | "permission-missing" | "workspace-unsafe"; detail: string }
 class ValidationError   { rule: string; path: string[]; message: string }
 class ProviderError     { kind: "spawn" | "crash" | "parse" | "timeout"; sessionId?: SessionId }
-class WorkspaceError    { op: "create" | "reconcile" | "checkpoint" | "rollback" | "finalize"; detail: string }
+class WorkspaceError    { op: "create" | "reconcile" | "checkpoint" | "rollback" | "finalize" | "remove"; detail: string }
 class JournalError      { op: string; detail: string }
 class CartridgeError    { stage: "load" | "validate" | "transform"; detail: string }
 class HerdrError        { op: "connect" | "tab" | "agent"; detail: string }

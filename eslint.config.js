@@ -7,4 +7,9 @@ export default tseslint.config(
   },
   js.configs.recommended,
   tseslint.configs.recommended,
+  {
+    // Plain-JS scripts run directly by node; TS files get their globals from @types/node.
+    files: ["**/*.mjs"],
+    languageOptions: { globals: { process: "readonly" } },
+  },
 )

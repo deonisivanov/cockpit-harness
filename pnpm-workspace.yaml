@@ -3,6 +3,7 @@ packages:
   - packages/*
 allowBuilds:
   '@parcel/watcher': false
+  better-sqlite3: true
   msgpackr-extract: false
 # pnpm 11 defaults minimumReleaseAge to 1440 minutes even with none configured here; this exclusion is load-bearing, not dead.
 minimumReleaseAgeExclude:

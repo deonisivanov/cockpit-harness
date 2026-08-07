@@ -1,0 +1,438 @@
+import { SqlClient } from "@effect/sql"
+import { Context, Effect, Exit, Fiber, Stream } from "effect"
+import { expect, it } from "vitest"
+import { AttemptId, BlockId, CheckpointId, EventBus, Journal, RunId } from "../src/index.js"
+import { payloads, readEvents, runKernel, tempHome, withKernel } from "./helpers.js"
+
+type JournalService = Context.Tag.Service<typeof Journal>
+
+const runId = RunId.make("run-1")
+const blockId = BlockId.make("block-1")
+const attemptId = AttemptId.make("attempt-1")
+
+it("creates every contract table and stays idempotent across boots", async () => {
+  const home = await tempHome()
+  const tables = Effect.flatMap(
+    SqlClient.SqlClient,
+    (sql) => sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type = 'table'`,
+  ).pipe(Effect.map((rows) => rows.map((row) => row.name).sort()))
+
+  const boot = () => runKernel(home, tables)
+
+  const first = await boot()
+  expect(first).toEqual(
+    expect.arrayContaining([
+      "artifacts",
+      "attempts",
+      "blocks",
+      "checkpoints",
+      "events",
+      "insights",
+      "projects",
+      "runs",
+    ]),
+  )
+  expect(await boot()).toEqual(first)
+})
+
+it("runs sqlite in WAL mode so a killed process leaves a recoverable journal", async () => {
+  const mode = await withKernel(
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ journal_mode: string }>`PRAGMA journal_mode`,
+    ),
+  )
+  expect(mode[0].journal_mode).toBe("wal")
+})
+
+it("walks a run through the legal lifecycle and journals each transition", async () => {
+  const events = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "project-1", prompt: "do the thing" })
+      yield* journal.startRun(runId)
+      yield* journal.startBlock({ runId, blockId, defId: "implement", kind: "agent" })
+      yield* journal.startAttempt({ runId, blockId, attemptId, number: 1 })
+      yield* journal.finishAttempt({ runId, blockId, attemptId, verdict: "success" })
+      yield* journal.finishBlock(runId, blockId, "succeeded")
+      yield* journal.finishRun(runId, "succeeded")
+      expect(yield* journal.runStatus(runId)).toBe("succeeded")
+      return yield* readEvents(runId)
+    }),
+  )
+
+  expect(payloads(events)).toEqual([
+    "RunCreated",
+    "RunStarted",
+    "BlockStarted",
+    "AttemptStarted",
+    "AttemptFinished",
+    "BlockFinished",
+    "RunFinished",
+  ])
+  expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
+})
+
+const illegal = [
+  {
+    name: "starting a run twice",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.startRun(runId)
+        yield* journal.startRun(runId)
+      }),
+  },
+  {
+    name: "finishing a run that never started",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.finishRun(runId, "succeeded")
+      }),
+  },
+  {
+    name: "starting a run that does not exist",
+    steps: (journal: JournalService) => journal.startRun(runId),
+  },
+  {
+    name: "cancelling an already finished run",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.startRun(runId)
+        yield* journal.finishRun(runId, "failed")
+        yield* journal.cancelRun(runId)
+      }),
+  },
+  {
+    name: "creating the same run twice",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      }),
+  },
+]
+
+it.each(illegal)("rejects $name with a JournalError", async ({ steps }) => {
+  const exit = await withKernel(
+    Effect.flatMap(Journal, (journal) => Effect.exit(steps(journal))),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(String(exit)).toContain("JournalError")
+})
+
+it("rejects block and attempt transitions that skip their parent state", async () => {
+  const failures = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      const blockBeforeRunStart = yield* Effect.exit(
+        journal.startBlock({ runId, blockId, defId: "d", kind: "command" }),
+      )
+      yield* journal.startRun(runId)
+      const attemptWithoutBlock = yield* Effect.exit(
+        journal.startAttempt({ runId, blockId, attemptId, number: 1 }),
+      )
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "command" })
+      yield* journal.startAttempt({ runId, blockId, attemptId, number: 1 })
+      yield* journal.finishAttempt({ runId, blockId, attemptId, verdict: "success" })
+      const finishTwice = yield* Effect.exit(
+        journal.finishAttempt({ runId, blockId, attemptId, verdict: "success" }),
+      )
+      return [blockBeforeRunStart, attemptWithoutBlock, finishTwice]
+    }),
+  )
+
+  for (const exit of failures) {
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(String(exit)).toContain("JournalError")
+  }
+})
+
+it("persists the workspace coordinates a run was pinned to", async () => {
+  const row = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const sql = yield* SqlClient.SqlClient
+      yield* journal.createRun({
+        runId,
+        projectId: "p",
+        prompt: "x",
+        baseCommit: "abc123",
+        worktreePath: "/tmp/worktrees/p/run-1",
+        branch: "cockpit/run-run-1",
+      })
+      return yield* sql<{
+        base_commit: string
+        worktree_path: string
+        branch: string
+      }>`SELECT base_commit, worktree_path, branch FROM runs WHERE id = ${runId}`
+    }),
+  )
+
+  expect(row[0]).toEqual({
+    base_commit: "abc123",
+    worktree_path: "/tmp/worktrees/p/run-1",
+    branch: "cockpit/run-run-1",
+  })
+})
+
+it("skips a block and cancels the run without touching attempts", async () => {
+  const [status, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.skipBlock({
+        runId,
+        blockId,
+        defId: "optional-review",
+        kind: "agent",
+        reason: "toggled off by the analyzer",
+      })
+      yield* journal.cancelRun(runId)
+      return [yield* journal.runStatus(runId), yield* readEvents(runId)] as const
+    }),
+  )
+
+  expect(status).toBe("cancelled")
+  expect(payloads(events)).toEqual(["RunCreated", "RunStarted", "BlockSkipped", "RunCancelled"])
+  expect(events[2].payload).toMatchObject({ reason: "toggled off by the analyzer" })
+})
+
+it("leaves no event behind when a transition is rejected", async () => {
+  const events = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* Effect.exit(journal.finishRun(runId, "succeeded"))
+      return yield* readEvents(runId)
+    }),
+  )
+  expect(payloads(events)).toEqual(["RunCreated"])
+})
+
+it("refuses to write inside a caller's transaction, where publish would outlive a rollback", async () => {
+  const [exit, status, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const sql = yield* SqlClient.SqlClient
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      const nested = yield* Effect.exit(sql.withTransaction(journal.startRun(runId)))
+      return [nested, yield* journal.runStatus(runId), yield* readEvents(runId)] as const
+    }),
+  )
+
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(String(exit)).toContain("must own their transaction")
+  expect(status).toBe("created")
+  expect(payloads(events)).toEqual(["RunCreated"])
+})
+
+it("keeps the checkpoint row and its event atomic when the row insert conflicts", async () => {
+  const [checkpoints, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const sql = yield* SqlClient.SqlClient
+      const checkpointId = CheckpointId.make("deadbeef")
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.recordCheckpoint({ checkpointId, runId, kind: "success" })
+      yield* Effect.exit(journal.recordCheckpoint({ checkpointId, runId, kind: "salvage" }))
+      return [
+        yield* sql<{ id: string }>`SELECT id FROM checkpoints WHERE run_id = ${runId}`,
+        yield* readEvents(runId),
+      ] as const
+    }),
+  )
+
+  expect(checkpoints).toHaveLength(1)
+  expect(payloads(events)).toEqual(["RunCreated", "RunStarted", "CheckpointCreated"])
+})
+
+it("refuses a checkpoint for a run that is not running", async () => {
+  const exit = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      return yield* Effect.exit(
+        journal.recordCheckpoint({
+          checkpointId: CheckpointId.make("cafe"),
+          runId,
+          kind: "success",
+        }),
+      )
+    }),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(String(exit)).toContain("JournalError")
+})
+
+it("reads events from a cursor, excluding everything at or before it", async () => {
+  const [all, tail] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "command" })
+      const everything = yield* readEvents(runId)
+      const fromSecond = yield* Stream.runCollect(journal.eventsFrom(runId, everything[1].seq))
+      return [everything, Array.from(fromSecond)] as const
+    }),
+  )
+
+  expect(payloads(all)).toEqual(["RunCreated", "RunStarted", "BlockStarted"])
+  expect(payloads(tail)).toEqual(["BlockStarted"])
+})
+
+it("only returns events belonging to the requested run", async () => {
+  const events = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const other = RunId.make("run-2")
+      yield* journal.createRun({ runId, projectId: "p", prompt: "mine" })
+      yield* journal.createRun({ runId: other, projectId: "p", prompt: "theirs" })
+      yield* journal.startRun(other)
+      return yield* readEvents(runId)
+    }),
+  )
+  expect(payloads(events)).toEqual(["RunCreated"])
+})
+
+it("refuses to close a run while a block or attempt is still open", async () => {
+  const [withAttempt, withBlock, drained] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "agent" })
+      yield* journal.startAttempt({ runId, blockId, attemptId, number: 1 })
+
+      const openAttempt = yield* Effect.exit(journal.cancelRun(runId))
+      yield* journal.interruptAttempt(runId, blockId, attemptId)
+      const openBlock = yield* Effect.exit(journal.cancelRun(runId))
+      yield* journal.finishBlock(runId, blockId, "interrupted")
+      return [openAttempt, openBlock, yield* Effect.exit(journal.cancelRun(runId))] as const
+    }),
+  )
+
+  expect(Exit.isFailure(withAttempt)).toBe(true)
+  expect(String(withAttempt)).toContain("unfinished attempt")
+  expect(Exit.isFailure(withBlock)).toBe(true)
+  expect(String(withBlock)).toContain("running block")
+  expect(Exit.isSuccess(drained)).toBe(true)
+})
+
+it("refuses a checkpoint pinned to another run's block", async () => {
+  const exit = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const other = RunId.make("run-2")
+      yield* journal.createRun({ runId, projectId: "p", prompt: "mine" })
+      yield* journal.startRun(runId)
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "agent" })
+      yield* journal.createRun({ runId: other, projectId: "p", prompt: "theirs" })
+      yield* journal.startRun(other)
+      return yield* Effect.exit(
+        journal.recordCheckpoint({
+          checkpointId: CheckpointId.make("beef"),
+          runId: other,
+          blockId,
+          kind: "success",
+        }),
+      )
+    }),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(String(exit)).toContain("does not belong to run")
+})
+
+it("enforces foreign keys, so no row can hang off a run that never existed", async () => {
+  const [pragma, orphan] = await withKernel(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const rows = yield* sql<{ foreign_keys: number }>`PRAGMA foreign_keys`
+      const insert = yield* Effect.exit(sql`
+        INSERT INTO blocks (id, run_id, def_id, kind, status)
+        VALUES (${blockId}, ${"ghost"}, ${"d"}, ${"agent"}, ${"running"})`)
+      return [rows[0].foreign_keys, insert] as const
+    }),
+  )
+  expect(pragma).toBe(1)
+  expect(Exit.isFailure(orphan)).toBe(true)
+})
+
+it("lets exactly one of two concurrent startRun calls win", async () => {
+  const [exits, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      const both = yield* Effect.all(
+        [Effect.exit(journal.startRun(runId)), Effect.exit(journal.startRun(runId))],
+        { concurrency: 2 },
+      )
+      return [both, yield* readEvents(runId)] as const
+    }),
+  )
+
+  const failures = exits.filter(Exit.isFailure)
+  expect(exits.filter(Exit.isSuccess)).toHaveLength(1)
+  expect(failures).toHaveLength(1)
+  expect(String(failures[0])).toContain("JournalError")
+  expect(payloads(events).filter((tag) => tag === "RunStarted")).toHaveLength(1)
+})
+
+it("publishes concurrent appends to subscribers in seq order", async () => {
+  const appends = 25
+  const seqs = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const bus = yield* EventBus
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      const events = yield* bus.subscribe
+      const subscriber = yield* Effect.fork(
+        Stream.runCollect(Stream.take(events, appends)).pipe(Effect.timeout("10 seconds")),
+      )
+      yield* Effect.forEach(
+        Array.from({ length: appends }, (_, index) => index),
+        (index) =>
+          journal.append({
+            runId,
+            payload: {
+              _tag: "ErrorRaised",
+              class: "technical",
+              signature: "concurrent",
+              message: `${index}`,
+            },
+          }),
+        { concurrency: "unbounded", discard: true },
+      )
+      return Array.from(yield* Fiber.join(subscriber)).map((event) => event.seq)
+    }),
+  )
+
+  expect(seqs).toHaveLength(appends)
+  expect(seqs).toEqual([...seqs].sort((left, right) => left - right))
+  expect(new Set(seqs).size).toBe(appends)
+})
+
+it("publishes committed events to event bus subscribers", async () => {
+  const received = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const bus = yield* EventBus
+      const events = yield* bus.subscribe
+      const subscriber = yield* Effect.fork(
+        Stream.runCollect(Stream.take(events, 2)).pipe(Effect.timeout("5 seconds")),
+      )
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      return Array.from(yield* Fiber.join(subscriber))
+    }),
+  )
+
+  expect(payloads(received)).toEqual(["RunCreated", "RunStarted"])
+  expect(received.map((event) => event.seq)).toEqual([1, 2])
+})
