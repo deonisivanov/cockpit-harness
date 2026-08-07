@@ -1,78 +1,103 @@
 # Cockpit — Project Status (handoff)
 
-Updated: 2026-08-07. Phase: **design complete, implementation NOT started and NOT approved.**
+Updated: 2026-08-08. Phase: **implementation, phases 1–5 of 8 complete and reviewed; stopped by owner before Phase 6.**
 
 ## What this project is
 
-Cockpit — local, single-user control room that takes a user prompt, builds a workflow of AI agent blocks (Claude Code / Codex CLI on the user's subscription, no API keys) and command blocks, executes it in an isolated git worktree with durable journaling, adaptive retries, approval gates, and a dark 3-panel web UI. Split into reusable **Cockpit Core** and per-project **cartridge** in `<project>/.cockpit/`. Effect (TypeScript) is mandatory end to end. Full requirements: `promt.md` (Russian, ~700 lines).
+Cockpit — local, single-user control room that takes a user prompt, builds a workflow of AI agent blocks (Claude Code / Codex CLI on the user's subscription, no API keys) and command blocks, executes it in an isolated git worktree with durable journaling, adaptive retries, approval gates, and a dark 3-panel web UI. Reusable **Cockpit Core** + per-project **cartridge** in `<project>/.cockpit/`. Effect (TypeScript) mandatory end to end. Full requirements: `promt.md` (Russian). Pilot project for acceptance: `ai-interview-assistant`.
 
-## Read in this order (a new session needs nothing else)
+## Read in this order
 
-1. `PROJECT_STATUS.md` — this file.
-2. `docs/cockpit-plan.md` — the agreed plan: architecture, Effect services/Layers, workflow model, providers, plugin execution, retries/failure packets, isolation/recovery, session continuity, UI, **implementation phases (§16)**, acceptance criteria (§17), risks.
+1. This file.
+2. `docs/cockpit-plan.md` — architecture, services, phases (§16), acceptance (§17).
 3. `docs/adr.md` — 8 decisions with rejected alternatives.
-4. `docs/contracts.md` — typed contracts (workflow tree/template, BlockDef, PluginBinding, AttemptResult, FailurePacket, RetryPolicy, event model, SQLite schema, cartridge API).
-5. `docs/claude-design-prompt.md` — UI design prompt that produced the prototype below.
-6. **UI design prototype (authoritative visual reference for Phase 6):**
+4. `docs/contracts.md` — typed contracts, **updated with implementation settlements** (marked "settled in Phase N").
+5. `docs/claude-design-prompt.md` + UI design prototype (authoritative for Phase 6):
    https://claude.ai/design/p/cfbbafca-56a2-4192-8e62-f063230ac008?file=Cockpit.dc.html
-   Import via the claude_design MCP (`https://api.anthropic.com/v1/design/mcp`, auth via `/design-login`); implement `Cockpit.dc.html`, also read `support.js` which the selection imports. The prototype is a full simulation (streaming, timers, pulse) of one app with a state switcher covering 8 states (retrospective excluded), close to the Klimov reference; priority-rendered parts: ANSI terminal output, unified diff, inter-attempt failure packet.
-7. `promt.md` + `CLAUDE.md` — source requirements and repo working rules.
-8. `.omc/specs/deep-interview-cockpit.md` — interview record (11 rounds, ambiguity 15.8%); consult only for decision provenance.
+   Import via claude_design MCP; implement `Cockpit.dc.html` + `support.js`.
+6. `promt.md` + `CLAUDE.md`.
 
 ## Current goals
 
-- Get explicit owner approval of `docs/cockpit-plan.md` (and its dependency list §14).
-- Then execute plan phases 1–8 (§16), starting with Phase 1 (monorepo scaffold).
+Owner-ordered stop after Phase 5. Next: **Phase 6 (UI)** — ApiServer (REST+WS), three-panel layout per the design prototype; then Phase 7 (continuity/herdr), Phase 8 (retrospective + pilot cartridge + acceptance §17).
 
-## Completed
+## Completed (commits on `main`, no remote)
 
-- OMC Deep Interview (11 rounds, threshold 20%, final ambiguity 15.8%) — all major unknowns resolved with the owner.
-- Environment verified on this machine: Claude Code 2.1.224, Codex CLI 0.146.0, OMC plugin 4.15.6, herdr 0.7.5 (running, socket `~/.config/herdr/herdr.sock`, protocol 17), Ghostty.app (CLI inside app bundle, not on PATH).
-- Effect ecosystem checked via Context7: `@effect/workflow` experimental + cluster-coupled → rejected for the core (ADR-002).
-- All four design docs written.
+| Commit | Phase | Contents |
+|---|---|---|
+| f17b49d | docs | design docs, plan, ADRs, contracts, interview record |
+| ae4ab4c | 1 | pnpm monorepo (apps/cockpitd, apps/ui, packages/core, packages/cartridge-kit), Effect daemon, /healthz, static UI serving, CI |
+| fd17d23 | 2 | SQLite journal (WAL, FKs, migrations), journal-first state machine, EventBus, WorkspaceManager (worktree per run), CheckpointService, recovery scan, daemon pidfile lock; **automated kill -9 gate green** |
+| b36a44f | 3 | ProcessSupervisor (process-group kill, SIGTERM→SIGKILL), Provider interface, Claude/Codex adapters with live-recorded fixtures, FakeProvider, CommandRunner; argv `--` injection guard |
+| 51a6799 | 4 | workflow Schemas, WorkflowEngine (sequence/parallel/condition/loop/gate), RetryCoordinator, FailurePacket + budgeted compaction, WorkflowValidator (11+ rules), ArtifactStore; **fake-provider E2E strategy-change gate green** |
+| bba9e33 | 5 | real cartridge-kit (defineCartridge), CartridgeLoader (jiti, hash, watch), TemplateRegistry + core templates (task/quickfix/guarded-fix), hybrid Analyzer with fallback, TransformPipeline, PluginCatalog + preflight (Fail/SkipWithWarning/AlternativeBinding), binding-aware prompts, stateFiles capture |
 
-## Key decisions (detail + alternatives in docs/adr.md)
+Each phase: implemented by OMC executor (opus), reviewed by two parallel reviewers (correctness + AI-slop), all valid findings fixed and amended in. Review yield examples: Phase 3 argv injection (prompt starting `-` escalates permissions), Phase 5 critical (read-only profile could not write `$COCKPIT_OUTPUT` — every real Analyzer/verify run would have failed; masked by fake provider).
 
-| # | Decision |
-|---|----------|
-| ADR-001 | Local daemon `cockpitd` (Effect on Node) + React SPA in browser on localhost |
-| ADR-002 | Custom SQLite journal (runs/blocks/attempts + append-only events); no Temporal, no @effect/workflow |
-| ADR-003 | Hybrid Analyzer: selects/parameterizes workflow templates; never generates free-form DAGs |
-| ADR-004 | Fresh provider session per attempt + typed FailurePacket; `sessionPolicy: "continue"` only as explicit opt-in |
-| ADR-005 | Git worktree per run from pinned base commit; checkpoints = commits; finalize to target branch |
-| ADR-006 | v1 = both providers + approval gates + retrospective; provider/plugin switch mid-retry deferred to v2 |
-| ADR-007 | Cartridge (`.cockpit/cockpit.config.ts`) loaded in-process via jiti behind Schema validation |
-| ADR-008 | One canonical task-level continuation session, opened as herdr tab (`Open session in terminal`), resumed by stored session id |
+## Key technical decisions
 
-Pilot project for the first cartridge and end-to-end acceptance: **`ai-interview-assistant`**. No pilot-specific logic may enter Core.
+ADR-001..008 unchanged (daemon+SPA, custom SQLite journal, hybrid analyzer, fresh-session attempts, worktree per run, v1 scope, jiti in-process cartridge, canonical continuation session). Implementation settlements (all recorded in contracts.md):
 
-## Files changed (this stage)
+- **Versions pinned**: effect 3.22.1, @effect/platform 0.97.1, @effect/platform-node 0.108.1, @effect/sql 0.52.1, @effect/sql-sqlite-node 0.53.0, jiti 2.7.0, react 19.2.8, vite 8.2.1, tailwindcss 4.3.3, vitest 4.1.10, **typescript 5.9.3** (not 7.x/tsgo — Effect type-system risk).
+- Block IO = `ContractField[]` (serializable, validator-comparable), runtime Schema derived.
+- `BlockId` = per-run instance id (`implement`, `implement#2` per loop iteration); template block id in `blocks.def_id`.
+- Tree provenance (analyzer decision, transform diffs) lives in journal events, not on the tree.
+- Permission profiles: `read-only` (claude plan mode + disallowed write tools / codex OS sandbox — different guarantees, documented), **`read-plus-output`** (repository read-only but `$COCKPIT_OUTPUT` writable — required by Analyzer and verify blocks), `workspace-write` (+`--allowedTools Bash` for claude so headless runs execute checks), `workspace-write-network`.
+- Codex: session id captured from JSONL stream (not assignable); resume = `codex exec resume <id>`; sandbox via `-c sandbox_mode=...` (works in both fresh and resume forms; `-s` does NOT work on resume); run-dir write access via `-c sandbox_workspace_write.writable_roots=[...]`.
+- Retry counts attach to loops via derived policies `<policy>@<blockId>:<n>`.
+- `RetryPolicy.attemptTimeoutMs`, `stopImmediately`, policy-level `successCriteria` dropped for v1; technical-retry bound is an engine constant (3).
+- Salvage checkpoints tagged `cockpit/salvage/<attemptId>` so rollback cannot orphan them.
+- tsBuildInfoFile lives inside `dist/` (all emitting tsconfigs) so `rm -rf dist` is a true clean slate.
 
-Created: `docs/cockpit-plan.md`, `docs/adr.md`, `docs/contracts.md`, `docs/claude-design-prompt.md`, `PROJECT_STATUS.md`, `.omc/specs/deep-interview-cockpit.md`. Nothing else exists — **no code, no package.json, no git repo yet** (repo must be `git init`-ed at Phase 1; commits require owner permission per CLAUDE.md).
+## Layout / main files
 
-## Testing / verification
+```
+apps/cockpitd/src/          main.ts (layer composition), router.ts (healthz + static)
+apps/ui/                    Vite+React+Tailwind stub (Phase 6 replaces)
+packages/core/src/          ids, errors, events, config, Db, Journal, EventBus, Recovery,
+                            DaemonLock, Workspace, ProcessSupervisor, Provider,
+                            ClaudeCodeProvider, CodexProvider, CommandRunner, ArtifactStore,
+                            workflow, blocks, templates, TemplateRegistry, WorkflowValidator,
+                            WorkflowEngine, RetryCoordinator, failure, Analyzer,
+                            TransformPipeline, PluginCatalog, CartridgeLoader, cartridge, text
+packages/core/test/         17 files incl. fixtures/ (live-recorded CLI streams,
+                            sample-cartridge workspace package), fake-provider.mjs,
+                            crash-child.mjs, engine-harness, trees
+packages/cartridge-kit/     defineCartridge + re-exported cartridge-facing types
+scripts/refresh-fixtures.sh clean-env fixture re-record (per CLI version bump)
+```
 
-None — docs-only stage, nothing executable exists. Testing strategy for implementation is defined in plan §15 (fake-provider fixtures, kill -9 recovery test, TestClock, Playwright smoke).
+## Testing / verification (state at stop)
 
-## Known problems / open items (blockers first)
+- `pnpm -r test`: **214 core + 9 cockpitd + sample-cartridge typecheck**, green from clean slate (`rm -rf` all dist).
+- Gates passed: automated `kill -9` recovery (Phase 2), fake-provider E2E with semantic failure → failure packet → fresh session → verbatim verifier findings in retry prompt (Phase 4).
+- Real-CLI touchpoints: recorded fixtures (claude 2.1.224, codex-cli 0.146.0) via `--setting-sources "" --strict-mcp-config` / `--ignore-user-config`; one live read-only `--version` probe test.
+- Mutation-checked guards: git identity flags, checkpoint onError reset, stale-output rm, loop instance ids, kill-window handshake.
+- Daemon boots: migrations → recovery scan → pidfile → listen; `/healthz` 200; second daemon on same COCKPIT_HOME fails fast.
 
-1. **Implementation is blocked on explicit owner plan approval.** Owner's hard rule: no code before approval; never agree silently — challenge and recommend.
-2. **`refs/` screenshots still not in the repo.** The Klimov reference screenshots were used to produce the Claude Design prototype (link above), which now serves as the authoritative visual reference; `docs/claude-design-prompt.md` keeps ⚠ marks on typography/exact color values — resolve them from the prototype's CSS, not from guesswork. Adding the screenshots to `refs/` is still useful for design review but no longer blocks Phase 6.
-3. **Dependencies unapproved.** Plan §14 list (effect, @effect/platform, @effect/sql-sqlite-node, jiti, react, vite, tailwindcss, @xterm/xterm, shiki, virtua, react-markdown, vitest, playwright) needs owner approval; pin versions after a Context7 docs check at implementation start.
-4. Provider CLI flags (claude `-p/--session-id/--resume/stream-json`, `codex exec --json/resume`) must be re-verified against current docs at Phase 3 — CLI formats drift.
-5. Known risk register: plan §18 (headless plugin visibility, double retries, context budgets, herdr protocol drift, Effect v3/v4).
+## Known problems / open items
 
-## Approaches tried and rejected (don't revisit without new evidence)
+1. **Codex cannot scope run-dir writes under read-plus-output** — `writable_roots` only works under `workspace-write`; documented gap vs claude-code (which scopes via `--add-dir`). Revisit if codex adds a mode.
+2. **Cartridge hash/watch covers `.cockpit/**/*.ts` only** — imports outside `.cockpit` are unhashed/unwatched (documented limit in CartridgeLoader).
+3. **jiti load timeout only catches async stalls** — synchronous IO/CPU in a cartridge blocks the event loop; ADR-007 trust model, review-governed.
+4. **Plugin discovery = documented subset**: `installed_plugins.json` v2 + `settings.json` enabledPlugins + top-level commands/skills/agents dirs; nested command namespaces report `entry-missing`; sha-versioned plugins fail any `minVersion`; only first install entry read.
+5. **Claude read-only ≠ codex read-only**: claude-side policy vs OS sandbox — same profile name, different guarantee (documented in ClaudeCodeProvider).
+6. **Machine-local quirks**: global `~/.config/git/ignore` contains `.omc/` — `.omc/specs/deep-interview-cockpit.md` untracked (`git add -f` needed, owner undecided); pnpm 11 implicit `minimumReleaseAge` makes `minimumReleaseAgeExclude` in pnpm-workspace.yaml load-bearing; permission classifier sometimes blocks `git commit`/`git add -A`/`git add -f` (explicit-path adds + owner-approved commits pass).
+7. `eventsFrom` pages via `limit` param (default 1000) — Phase 6 WS layer must paginate by cursor.
+8. ReDoS in cartridge regex rules: accepted v1 risk (`ponytail:` marker), single-user trust model.
+9. Provider CLI formats drift — re-run `scripts/refresh-fixtures.sh` and re-verify flags on CLI version bumps (recorded per run in the journal).
 
-All recorded with reasoning in `docs/adr.md`: Temporal and @effect/workflow for durability; free-form LLM DAG generation; resume-by-default retry sessions; Electron/Tauri/TUI form factors; in-place or full-copy isolation; per-press fresh continuation sessions. Also: "Herd" is **herdr** (terminal workspace manager), not Laravel Herd — verified on disk.
+## Tried and rejected (don't revisit without new evidence)
+
+All ADR rejections (Temporal, @effect/workflow, free-form DAGs, Electron/Tauri/TUI, resume-by-default). Session additions: TypeScript 7 native (Effect types risk); `--bare` for fixture recording (breaks subscription auth — use `--setting-sources ""`); `-s` sandbox flag on `codex exec resume` (rejected by CLI — use `-c sandbox_mode=`); `Migrator.fromRecord` sqlite CLI schema dump layer (drags CommandExecutor — use `Migrator.make({})`); wall-clock ordering for checkpoint recovery (clock steps backwards — rowid); plan-mode for output-writing blocks (cannot write); OMC-typed reviewer agents in background (final text undelivered — use general-purpose with explicit SendMessage-to-main instruction, or ping idle agents to retrieve).
 
 ## Next steps (in order)
 
-1. Owner: add screenshots to `refs/`; approve plan + dependencies (or request changes → update docs).
-2. On approval: Phase 1 — `git init`, pnpm monorepo scaffold (`apps/cockpitd`, `apps/ui`, `packages/core`, `packages/cartridge-kit`), Effect runtime boots, stub UI served. Each phase = one reviewable unit (commit + review per CLAUDE.md).
-3. Phases 2–8 per plan §16, gates: automated `kill -9` recovery test (Phase 2), fake-provider E2E with strategy-changing retry (Phase 4), full acceptance scenario on `ai-interview-assistant` (Phase 8, criteria in plan §17).
-4. Phase 6 (UI) starts by importing the Claude Design prototype (link in the reading list) via the claude_design MCP and porting `Cockpit.dc.html` + `support.js` to the React/Vite app — layout, tokens, and component states come from the prototype; live data comes from the daemon's WS event stream.
+1. **Phase 6 — UI**: ApiServer (REST queries/commands + WS event stream with cursor backfill) in cockpitd; import the Claude Design prototype (`Cockpit.dc.html` + `support.js`) via claude_design MCP and port to apps/ui (React/Vite/Tailwind; deps @xterm/xterm, shiki, virtua, react-markdown pre-approved in plan §14 — pin after Context7 check); three panels, live stream expanders, tree with `2/3` loop indicators, approval/question flows, retry controls. Wire `approveGate` + run commands over HTTP.
+2. **Phase 7 — continuity**: task brief from journal, canonical session (ADR-008), HerdrClient (socket `~/.config/herdr/herdr.sock`, protocol 17 at last check), `Open session in terminal` + fallbacks (fresh session from brief; Ghostty CLI direct when herdr down).
+3. **Phase 8 — retrospective + pilot**: RetrospectiveService (deduped insights, core vs cartridge), insights UI, build `ai-interview-assistant` cartridge, run full acceptance §17 (includes `kill -9` mid-run and preflight-rejection scenarios).
+4. Per-phase protocol stays: executor (opus) → owner-visible verify → commit → two parallel reviewers (fresh contexts, scoped to `HEAD~1..HEAD`, explicit SendMessage report) → fix batch → amend. Conventional Commits; commits allowed per owner grant of 2026-08-07 («делай коммит и продолжаем»).
 
 ## Working conventions (owner-set, non-negotiable)
 
-Conversation with owner: Russian. All code/docs/UI text/names: English. Ponytail (laziest working solution) + OMC delegation + Context7 for any library question. Conventional Commits; never commit/push without permission. Regression test with every fix; review pass after every finished unit.
+Conversation with owner: Russian. All code/docs/UI text: English. Ponytail (laziest working solution) + OMC delegation + Context7 for library questions (never from memory). Regression test with every fix; review pass after every phase; never commit/push without owner permission.
