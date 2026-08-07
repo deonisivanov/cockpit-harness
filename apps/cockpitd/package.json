@@ -1,0 +1,22 @@
+{
+  "name": "cockpitd",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cockpit/core": "workspace:*",
+    "@effect/platform": "0.97.1",
+    "@effect/platform-node": "0.108.1",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "vitest": "4.1.10"
+  }
+}
