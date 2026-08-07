@@ -1,13 +1,14 @@
 import { Context, Deferred, Effect, Exit, HashMap, Layer, Ref } from "effect"
 import { randomUUID } from "node:crypto"
-import { lstat, mkdir, readFile, rm } from "node:fs/promises"
+import { mkdir, readFile, rm } from "node:fs/promises"
 import * as NodePath from "node:path"
-import { ArtifactStore } from "./ArtifactStore.js"
+import { ArtifactStore, readAgentOutput } from "./ArtifactStore.js"
 import { ClaudeCodeProvider } from "./ClaudeCodeProvider.js"
 import { CodexProvider } from "./CodexProvider.js"
-import { artifactExists, CommandRunner, CommandSpec } from "./CommandRunner.js"
+import { CommandRunner, CommandSpec, matchArtifacts } from "./CommandRunner.js"
 import {
   JournalError,
+  PreflightError,
   ProcessError,
   ProviderError,
   ValidationError,
@@ -17,19 +18,22 @@ import { AttemptVerdict, CriterionResult } from "./events.js"
 import { AttemptEvidence, buildFailurePacket } from "./failure.js"
 import { ArtifactId, AttemptId, BlockId, CheckpointId, RunId, SessionId } from "./ids.js"
 import { Journal } from "./Journal.js"
-import { Provider, ProviderEvent, runToResult } from "./Provider.js"
+import { PluginCatalog, PreflightResult } from "./PluginCatalog.js"
+import { Provider, ProviderEvent, ProviderName, runToResult } from "./Provider.js"
 import { AttemptInput, AttemptOutcome, RetryCoordinator } from "./RetryCoordinator.js"
-import { clip, outputBudget } from "./text.js"
+import { clip, outputBudget, renderSlots } from "./text.js"
 import { CheckpointService, Workspace } from "./Workspace.js"
-import { blocksIn, validateWorkflow, WorkflowCatalog } from "./WorkflowValidator.js"
+import { blocksIn, bindingOf, validateWorkflow, WorkflowCatalog } from "./WorkflowValidator.js"
 import {
   BlockDef,
   BlockInputEnvelope,
+  BlockOverrides,
   ContractField,
   contractProblems,
   evaluateCheck,
   GatePayload,
   pickFields,
+  PluginBinding,
   RetryPolicy,
   WorkflowNode,
   WorkflowTree,
@@ -54,6 +58,7 @@ export type EngineError =
   | WorkspaceError
   | ProviderError
   | ProcessError
+  | PreflightError
 
 export class WorkflowEngine extends Context.Tag("cockpit/WorkflowEngine")<
   WorkflowEngine,
@@ -82,11 +87,6 @@ interface RunState {
 interface Judged extends AttemptEvidence {
   readonly failed: boolean
   readonly outputRef?: ArtifactId
-}
-
-interface OutputFile {
-  readonly text?: string
-  readonly problem?: string
 }
 
 interface NodeContext {
@@ -129,35 +129,6 @@ const boundedOutput = (
     }),
   )
 
-/**
- * The result file is the agent's to write, so its size and its kind are checked before it is read:
- * an oversized result breaks the contract rather than being silently truncated, and a symlink is
- * refused outright rather than followed out of the run directory.
- */
-const readOutput = (path: string): Effect.Effect<OutputFile> =>
-  Effect.gen(function* () {
-    const stats = yield* Effect.tryPromise(() => lstat(path)).pipe(
-      Effect.orElseSucceed(() => undefined),
-    )
-    if (stats === undefined) {
-      return { problem: `no JSON result was written to $COCKPIT_OUTPUT (${path})` }
-    }
-    if (!stats.isFile()) {
-      return { problem: `$COCKPIT_OUTPUT (${path}) is not a regular file` }
-    }
-    if (stats.size > outputBudget) {
-      return {
-        problem: `the result at $COCKPIT_OUTPUT is ${stats.size} bytes, over the ${outputBudget} byte limit`,
-      }
-    }
-    const text = yield* Effect.tryPromise(() => readFile(path, "utf8")).pipe(
-      Effect.orElseSucceed(() => undefined),
-    )
-    return text === undefined
-      ? { problem: `the result at $COCKPIT_OUTPUT (${path}) could not be read` }
-      : { text }
-  })
-
 const outputInstruction = (fields: ReadonlyArray<ContractField>, path: string) =>
   [
     `Write your result as a single JSON object to the file at $COCKPIT_OUTPUT (${path}).`,
@@ -168,19 +139,56 @@ const outputInstruction = (fields: ReadonlyArray<ContractField>, path: string) =
     "Nothing else counts as this block's result; a missing or malformed file is a failure.",
   ].join("\n")
 
+const qualified = (binding: PluginBinding) =>
+  binding.plugin === undefined ? binding.entry.name : `${binding.plugin}:${binding.entry.name}`
+
+/**
+ * Claude expands a slash command only when the prompt opens with it, so a bound block leads with
+ * the invocation and everything the block would otherwise have said follows as its argument text.
+ * Codex has no slash commands, so the same binding becomes an instruction naming the entry.
+ */
+const bindingLines = (
+  binding: PluginBinding,
+  provider: ProviderName,
+  prompt: string,
+): ReadonlyArray<string> => {
+  // Collapsed onto one line: a multi-line prompt rendered into the template would otherwise end the
+  // slash invocation at its first newline and leave the rest as loose text below it.
+  const args = renderSlots(binding.argsTemplate ?? "", { prompt }).replace(/\s+/g, " ").trim()
+  const name = qualified(binding)
+  const withArgs = args === "" ? "" : ` with: ${args}`
+  const invocation =
+    provider === "claude-code" && binding.entry.kind === "slash"
+      ? `/${name}${args === "" ? "" : ` ${args}`}`
+      : binding.entry.kind === "agent"
+        ? `Delegate this block to the ${name} agent (Agent tool, subagent_type ${binding.entry.name})${withArgs}.`
+        : binding.entry.kind === "skill"
+          ? `Invoke the ${name} skill before anything else${withArgs}.`
+          : `Follow the workflow of the ${name} command${withArgs}.`
+  return [
+    invocation,
+    ...(binding.extraInstructions === undefined ? [] : ["", binding.extraInstructions]),
+  ]
+}
+
 const composePrompt = (input: {
   readonly def: BlockDef
+  readonly binding?: PluginBinding
+  readonly goal?: string
   readonly prompt: string
   readonly envelope: unknown
   readonly outputPath: string
   readonly feedback?: string
 }) =>
   [
+    ...(input.binding === undefined
+      ? []
+      : [...bindingLines(input.binding, input.def.provider ?? "claude-code", input.prompt), ""]),
     `# ${input.def.title}`,
     "",
     "## Task",
     input.prompt,
-    ...(input.def.promptTemplate === undefined ? [] : ["", "## Goal", input.def.promptTemplate]),
+    ...(input.goal === undefined ? [] : ["", "## Goal", input.goal]),
     "",
     "## Input",
     "```json",
@@ -218,6 +226,7 @@ export const WorkflowEngineLive = Layer.effect(
     const coordinator = yield* RetryCoordinator
     const claude = yield* ClaudeCodeProvider
     const codex = yield* CodexProvider
+    const plugins = yield* PluginCatalog
 
     const gates = yield* Ref.make(
       HashMap.empty<string, Deferred.Deferred<{ approved: boolean; note?: string }>>(),
@@ -383,12 +392,99 @@ export const WorkflowEngineLive = Layer.effect(
             }
           })
 
+        /**
+         * A plugin's declared state is captured from the worktree it wrote it in, per attempt: a
+         * failed attempt's leftovers are exactly the evidence the next one is judged against.
+         */
+        const captureStateFiles = (
+          binding: PluginBinding | undefined,
+          blockId: BlockId,
+          attemptId: AttemptId,
+        ) =>
+          Effect.forEach(binding?.stateFiles ?? [], (pattern) =>
+            Effect.flatMap(matchArtifacts(workspace.path, pattern), (matches) =>
+              Effect.forEach(matches, (relative) =>
+                Effect.gen(function* () {
+                  const content = yield* Effect.tryPromise(() =>
+                    readFile(NodePath.join(workspace.path, relative), "utf8"),
+                  ).pipe(Effect.orElseSucceed(() => undefined))
+                  if (content === undefined) return
+                  yield* artifacts.write({
+                    runId,
+                    blockId,
+                    attemptId,
+                    kind: "plugin-state",
+                    name: relative.replace(/[/\\]/g, "-"),
+                    content: clip(content, outputBudget),
+                  })
+                }),
+              ),
+            ),
+          ).pipe(Effect.asVoid)
+
+        /**
+         * Preflight decides whether a block may run at all (plan §6). What happens when it may not
+         * is the block's declared fallback — including an alternative binding, which is recorded as
+         * resolved rather than swapped in quietly.
+         */
+        const resolveBinding = (
+          def: BlockDef,
+          overrides: BlockOverrides | undefined,
+        ): Effect.Effect<
+          | {
+              readonly _tag: "Ready"
+              readonly binding?: PluginBinding
+              readonly resolved: PreflightResult
+              readonly alternative: boolean
+            }
+          | { readonly _tag: "Skip"; readonly reason: string },
+          EngineError
+        > =>
+          Effect.gen(function* () {
+            const provider = def.provider ?? "claude-code"
+            const declared = bindingOf(def, overrides)
+            const attempted = yield* Effect.either(plugins.preflight({ provider, binding: declared }))
+            if (attempted._tag === "Right") {
+              return {
+                _tag: "Ready",
+                binding: declared,
+                resolved: attempted.right,
+                alternative: false,
+              }
+            }
+
+            const failure = attempted.left
+            yield* journal.append({
+              runId,
+              payload: {
+                _tag: "ErrorRaised",
+                class: "preflight",
+                signature: failure.reason,
+                message: `${def.id}: ${failure.detail}`,
+              },
+            })
+            switch (def.fallback._tag) {
+              case "Fail":
+                return yield* Effect.fail(failure)
+              case "SkipWithWarning":
+                return {
+                  _tag: "Skip",
+                  reason: `${failure.reason}: ${failure.detail}; any later block that requires ${def.id}'s output will now fail its input contract`,
+                }
+              case "AlternativeBinding": {
+                const alternative = def.fallback.binding
+                const resolved = yield* plugins.preflight({ provider, binding: alternative })
+                return { _tag: "Ready", binding: alternative, resolved, alternative: true }
+              }
+            }
+          })
+
         const missingArtifacts = (def: BlockDef) =>
           Effect.forEach(
             (def.expectedArtifacts ?? []).filter((expected) => expected.required),
             (expected) =>
-              Effect.map(artifactExists(workspace.path, expected.glob), (found) =>
-                found ? [] : [`expected artifact ${expected.glob} was not produced`],
+              Effect.map(matchArtifacts(workspace.path, expected.glob, 1), (found) =>
+                found.length > 0 ? [] : [`expected artifact ${expected.glob} was not produced`],
               ),
             { concurrency: 4 },
           ).pipe(Effect.map((all) => all.flat()))
@@ -424,6 +520,7 @@ export const WorkflowEngineLive = Layer.effect(
           readonly feedback?: string
           readonly readOnly: boolean
           readonly timeoutMs: number
+          readonly binding?: PluginBinding
         }): Effect.Effect<Judged, EngineError> =>
           Effect.gen(function* () {
             const { attemptId, blockId, def, node } = input
@@ -444,6 +541,8 @@ export const WorkflowEngineLive = Layer.effect(
             })
             const prompt = composePrompt({
               def,
+              binding: input.binding,
+              goal: node.overrides?.promptTemplate ?? def.promptTemplate,
               prompt: request.task.prompt,
               envelope,
               outputPath,
@@ -530,7 +629,10 @@ export const WorkflowEngineLive = Layer.effect(
                     cwd: workspace.path,
                     sessionId: input.session.assigned,
                     resumeSessionId: input.session.resume,
-                    permissionProfile: input.readOnly ? "read-only" : def.permissionProfile,
+                    // Downgraded, not silenced: a block in a read-only branch still owes the run
+                    // its result, so it keeps the one write it needs.
+                    permissionProfile: input.readOnly ? "read-plus-output" : def.permissionProfile,
+                    outputDir: dir,
                     timeoutMs: input.timeoutMs,
                     // Where the result belongs and which block is asking for it; the prompt states
                     // the same obligation in words.
@@ -570,7 +672,9 @@ export const WorkflowEngineLive = Layer.effect(
               },
             })
 
-            const written = yield* readOutput(outputPath)
+            yield* captureStateFiles(input.binding, blockId, attemptId)
+
+            const written = yield* readAgentOutput(outputPath)
             const parsed = written.text === undefined ? undefined : safeJson(written.text)
             const outputRef =
               written.text === undefined
@@ -705,7 +809,35 @@ export const WorkflowEngineLive = Layer.effect(
             const blockId = yield* instanceId(node.id)
             const timeoutMs = node.overrides?.timeoutMs ?? def.timeoutMs
 
+            // Command blocks reach no provider and no plugin, so there is nothing to preflight.
+            const resolution =
+              def.kind === "agent" ? yield* resolveBinding(def, node.overrides) : undefined
+            if (resolution?._tag === "Skip") {
+              yield* journal.skipBlock({
+                runId,
+                blockId,
+                defId: def.id,
+                kind: def.kind,
+                reason: resolution.reason,
+              })
+              return { verdict: "success" } satisfies AttemptOutcome
+            }
+
             yield* journal.startBlock({ runId, blockId, defId: def.id, kind: def.kind })
+            if (resolution !== undefined) {
+              yield* journal.append({
+                runId,
+                blockId,
+                payload: {
+                  _tag: "PluginResolved",
+                  provider: resolution.resolved.provider,
+                  plugin: resolution.resolved.plugin,
+                  entry: resolution.resolved.entry,
+                  capabilities: resolution.resolved.capabilities,
+                  ...(resolution.alternative ? { alternative: true } : {}),
+                },
+              })
+            }
             const blockOpen = yield* Ref.make(true)
             const closeBlock = (status: "succeeded" | "failed" | "interrupted") =>
               Effect.flatMap(Ref.getAndSet(blockOpen, false), (open) =>
@@ -770,6 +902,7 @@ export const WorkflowEngineLive = Layer.effect(
                           feedback,
                           readOnly: context.readOnly,
                           timeoutMs,
+                          binding: resolution?.binding,
                         })
                       : yield* runCommand({
                           def,
@@ -836,7 +969,7 @@ export const WorkflowEngineLive = Layer.effect(
                       ...record,
                       attemptNumber: input.attempt,
                       approach: def.title,
-                      binding: def.binding?.entry.name,
+                      binding: resolution?.binding?.entry.name,
                       failureReason: `${def.id} did not satisfy its output contract and success criteria`,
                       // The loop sends this elsewhere, so the recipient is told who reported it
                       // rather than being handed the failure as its own last attempt.

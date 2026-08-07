@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { CommandSpec } from "./CommandRunner.js"
-import { BlockKind, ErrorClass } from "./events.js"
+import { BlockKind, ErrorClass, PluginEntry } from "./events.js"
 import { ArtifactId, BlockId, CheckpointId, RunId } from "./ids.js"
 import { PermissionProfile, ProviderName } from "./Provider.js"
 
@@ -60,10 +60,7 @@ export type ContractField = typeof ContractField.Type
 
 export const PluginBinding = Schema.Struct({
   plugin: Schema.optional(Schema.String),
-  entry: Schema.Struct({
-    kind: Schema.Literal("slash", "skill", "agent"),
-    name: Schema.String,
-  }),
+  entry: PluginEntry,
   argsTemplate: Schema.optional(Schema.String),
   extraInstructions: Schema.optional(Schema.String),
   requiredCapabilities: Schema.Array(Schema.String),
@@ -130,10 +127,16 @@ export const GatePayload = Schema.Struct({
 })
 export type GatePayload = typeof GatePayload.Type
 
-/** The two fields a reusable definition cannot know: what to run and how long it may take. */
+/**
+ * What a reusable definition cannot know: what to run, how long it may take, which goal this
+ * instance serves, and — once the Analyzer has chosen from a template's allowed set — through
+ * which plugin.
+ */
 export const BlockOverrides = Schema.Struct({
   command: Schema.optional(CommandSpec),
   timeoutMs: Schema.optional(Schema.Int),
+  promptTemplate: Schema.optional(Schema.String),
+  binding: Schema.optional(PluginBinding),
 })
 export type BlockOverrides = typeof BlockOverrides.Type
 

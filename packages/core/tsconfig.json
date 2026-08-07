@@ -3,7 +3,10 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // Inside the output, so `rm -rf dist` really is a clean slate: left beside the tsconfig, the
+    // build info outlives the files it describes and tsc reports an emptied project as up to date.
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
   "include": ["src"]
 }

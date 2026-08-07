@@ -6,14 +6,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && vitest run"
+    "build": "tsc -b tsconfig.json",
+    "test": "tsc -b ../cartridge-kit/tsconfig.json && tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
     "@effect/platform": "0.97.1",
     "@effect/sql": "0.52.1",
     "@effect/sql-sqlite-node": "0.53.0",
-    "effect": "3.22.1"
+    "effect": "3.22.1",
+    "jiti": "2.7.0"
   },
   "devDependencies": {
     "@effect/platform-node": "0.108.1",

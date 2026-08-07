@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { ArtifactId, AttemptId, BlockId, CheckpointId, EventSeq, RunId, SessionId } from "./ids.js"
+import { ProviderName } from "./Provider.js"
 
 export const RunStatus = Schema.Literal(
   "created",
@@ -38,6 +39,13 @@ export type CheckpointKind = typeof CheckpointKind.Type
 /** Technical failures get a backoff schedule; semantic ones get a new attempt with feedback. */
 export const ErrorClass = Schema.Literal("technical", "semantic")
 export type ErrorClass = typeof ErrorClass.Type
+
+/** How a plugin is reached from a headless session. */
+export const PluginEntry = Schema.Struct({
+  kind: Schema.Literal("slash", "skill", "agent"),
+  name: Schema.String,
+})
+export type PluginEntry = typeof PluginEntry.Type
 
 /** Emitted only by Journal's guarded transitions, so the log cannot narrate a state the tables never took. */
 export const LifecyclePayload = Schema.Union(
@@ -100,6 +108,26 @@ export const AncillaryPayload = Schema.Union(
         message: Schema.String,
       }),
     ),
+  }),
+  // `fallback` marks a tree built from the template's defaults because the Analyzer never produced
+  // a usable decision; `warning` says what was wrong with the one it did produce.
+  Schema.TaggedStruct("TreeAnalyzed", {
+    templateId: Schema.String,
+    rationale: Schema.String,
+    decision: Schema.Unknown,
+    fallback: Schema.Boolean,
+    warning: Schema.optional(Schema.String),
+  }),
+  Schema.TaggedStruct("TreeTransformed", { name: Schema.String, diffRef: ArtifactId }),
+  Schema.TaggedStruct("PluginResolved", {
+    provider: Schema.Struct({ name: ProviderName, version: Schema.optional(Schema.String) }),
+    plugin: Schema.optional(
+      Schema.Struct({ name: Schema.String, version: Schema.String }),
+    ),
+    entry: Schema.optional(PluginEntry),
+    capabilities: Schema.Array(Schema.String),
+    /** Set when the block's declared binding failed preflight and its alternative was used. */
+    alternative: Schema.optional(Schema.Boolean),
   }),
   Schema.TaggedStruct("PromptComposed", { promptRef: ArtifactId }),
   Schema.TaggedStruct("SessionStarted", { sessionId: SessionId }),

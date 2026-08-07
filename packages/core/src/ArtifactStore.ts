@@ -1,15 +1,49 @@
 import { Context, Effect, Layer } from "effect"
-import { mkdir, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import * as NodePath from "node:path"
 import { cockpitHome } from "./config.js"
 import { JournalError } from "./errors.js"
 import { ArtifactId, AttemptId, BlockId, RunId } from "./ids.js"
 import { Journal } from "./Journal.js"
-import { clip } from "./text.js"
+import { clip, outputBudget } from "./text.js"
 import { ArtifactRef } from "./workflow.js"
 
 const excerptChars = 2_000
+
+export interface AgentOutput {
+  readonly text?: string
+  readonly problem?: string
+}
+
+/**
+ * The result file is the agent's to write, so its size and its kind are checked before it is read:
+ * an oversized result breaks the contract rather than being silently truncated, and a symlink is
+ * refused outright rather than followed out of the run directory.
+ */
+export const readAgentOutput = (path: string): Effect.Effect<AgentOutput> =>
+  Effect.gen(function* () {
+    const stats = yield* Effect.tryPromise(() => lstat(path)).pipe(
+      Effect.orElseSucceed(() => undefined),
+    )
+    if (stats === undefined) {
+      return { problem: `no JSON result was written to $COCKPIT_OUTPUT (${path})` }
+    }
+    if (!stats.isFile()) {
+      return { problem: `$COCKPIT_OUTPUT (${path}) is not a regular file` }
+    }
+    if (stats.size > outputBudget) {
+      return {
+        problem: `the result at $COCKPIT_OUTPUT is ${stats.size} bytes, over the ${outputBudget} byte limit`,
+      }
+    }
+    const text = yield* Effect.tryPromise(() => readFile(path, "utf8")).pipe(
+      Effect.orElseSucceed(() => undefined),
+    )
+    return text === undefined
+      ? { problem: `the result at $COCKPIT_OUTPUT (${path}) could not be read` }
+      : { text }
+  })
 
 export interface WriteArtifactInput {
   readonly runId: RunId

@@ -32,3 +32,20 @@ export class DaemonError extends Schema.TaggedError<DaemonError>()("DaemonError"
   op: Schema.Literal("home", "lock"),
   detail: Schema.String,
 }) {}
+
+export class CartridgeError extends Schema.TaggedError<CartridgeError>()("CartridgeError", {
+  stage: Schema.Literal("load", "validate", "transform"),
+  detail: Schema.String,
+}) {}
+
+export class PreflightError extends Schema.TaggedError<PreflightError>()("PreflightError", {
+  reason: Schema.Literal(
+    "provider-unavailable",
+    "plugin-missing",
+    "entry-missing",
+    "version-incompatible",
+    "permission-missing",
+    "workspace-unsafe",
+  ),
+  detail: Schema.String,
+}) {}

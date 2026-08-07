@@ -7,7 +7,9 @@ import { tmpdir } from "node:os"
 import * as NodePath from "node:path"
 import { afterAll } from "vitest"
 import {
+  Analyzer,
   ArtifactStore,
+  CartridgeLoader,
   CheckpointService,
   ClaudeCodeProvider,
   ClaudeCodeProviderLive,
@@ -21,10 +23,14 @@ import {
   EventSeq,
   Journal,
   KernelLive,
+  PlanningLive,
+  PluginCatalog,
+  PluginCatalogLive,
   ProcessSupervisor,
   ProcessSupervisorLive,
   RetryCoordinator,
   RunId,
+  TransformPipeline,
   WorkflowEngine,
   WorkspaceManager,
 } from "../src/index.js"
@@ -84,6 +90,15 @@ export const runProviders = <A, E>(
   settings: Settings = {},
 ) => Effect.runPromise(Effect.scoped(Effect.provide(body, providerLayer(settings))))
 
+/** The catalog reads config files and probes binaries; it needs neither journal nor worktree. */
+export const runCatalog = <A, E>(
+  body: Effect.Effect<A, E, PluginCatalog>,
+  settings: Settings = {},
+) =>
+  Effect.runPromise(
+    Effect.provide(body, PluginCatalogLive.pipe(Layer.provide(settingsLayer(settings)))),
+  )
+
 export const fixturePath = (name: string) => NodePath.join(import.meta.dirname, name)
 
 export const node = (script: string) =>
@@ -106,6 +121,25 @@ export const runEngine = <A, E>(
   body: Effect.Effect<A, E, EngineContext>,
   settings: Settings = {},
 ) => Effect.runPromise(Effect.scoped(Effect.provide(body, engineLayer(home, settings))))
+
+export type PlanningContext = EngineContext | Analyzer | TransformPipeline | CartridgeLoader
+
+export const runPlanning = <A, E>(
+  home: string,
+  body: Effect.Effect<A, E, PlanningContext>,
+  settings: Settings = {},
+) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        body,
+        PlanningLive.pipe(
+          Layer.provide(NodeContext.layer),
+          Layer.provide(configuredHome(home, settings)),
+        ),
+      ),
+    ),
+  )
 
 // Cockpit spawns git with the parent environment, so blanking these is what keeps a developer's
 // own git config out of the fixtures.

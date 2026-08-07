@@ -1,6 +1,9 @@
 packages:
   - apps/*
   - packages/*
+  # A cartridge is a project that depends on the kit, so the fixture is one too: that is what
+  # proves the published types compile outside this repo's own build.
+  - packages/core/test/fixtures/sample-cartridge
 allowBuilds:
   '@parcel/watcher': false
   better-sqlite3: true

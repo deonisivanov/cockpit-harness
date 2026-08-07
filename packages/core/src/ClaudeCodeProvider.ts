@@ -21,14 +21,29 @@ const claudeBinary = Config.string("COCKPIT_CLAUDE_BIN").pipe(
 )
 
 /**
- * Both modes are claude-side policy, not an OS sandbox: plan refuses edits but the deny list is
- * what actually withholds the write and exec tools, and acceptEdits needs Bash allowed because a
- * headless run has nobody to answer a permission prompt. Neither mode scopes network.
+ * Every mode is claude-side policy, not an OS sandbox: plan refuses edits but the deny list is
+ * what actually withholds the write and exec tools, and acceptEdits needs its tools allowed because
+ * a headless run has nobody to answer a permission prompt. Neither mode scopes network.
+ * `read-plus-output` cannot be plan mode: plan withholds Write, and Write is the one thing such a
+ * block must do. The deny list is what keeps it out of the repository instead.
  */
-const permissionArgs = (profile: PermissionProfile): ReadonlyArray<string> =>
-  profile === "read-only"
-    ? ["--permission-mode", "plan", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"]
-    : ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"]
+const permissionArgs = (profile: PermissionProfile): ReadonlyArray<string> => {
+  switch (profile) {
+    case "read-only":
+      return ["--permission-mode", "plan", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"]
+    case "read-plus-output":
+      return [
+        "--permission-mode",
+        "acceptEdits",
+        "--disallowedTools",
+        "Edit,NotebookEdit,Bash",
+        "--allowedTools",
+        "Write",
+      ]
+    default:
+      return ["--permission-mode", "acceptEdits", "--allowedTools", "Bash"]
+  }
+}
 
 export const claudeArgv = (
   binary: string,
@@ -45,6 +60,8 @@ export const claudeArgv = (
       ? ["--session-id", options.sessionId]
       : []),
   ...permissionArgs(options.permissionProfile),
+  // The result file lives outside the worktree, so its directory has to be reachable on top of it.
+  ...(options.outputDir === undefined ? [] : ["--add-dir", options.outputDir]),
   // Everything after `--` is the prompt operand, so a prompt opening with `-` stays data.
   "--",
   options.prompt,

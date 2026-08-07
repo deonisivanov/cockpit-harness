@@ -91,7 +91,17 @@ const capture = (stream: Stream.Stream<Uint8Array, ProcessError>) =>
 export const escapesWorktree = (pattern: string) =>
   NodePath.isAbsolute(pattern) || pattern.split(/[/\\]/).includes("..")
 
-export const artifactExists = (cwd: string, pattern: string) =>
+/**
+ * A plugin's own state can be a whole directory tree (`.omc/**`), and every match is journaled, so
+ * the sweep stops here rather than turning one block into hundreds of artifacts.
+ */
+const stateFileLimit = 50
+
+/**
+ * Worktree-relative paths a glob matches, for capturing what a plugin left behind. `limit` is what
+ * an existence check passes as 1, so the sweep stops at the first hit instead of walking the tree.
+ */
+export const matchArtifacts = (cwd: string, pattern: string, limit = stateFileLimit) =>
   escapesWorktree(pattern)
     ? Effect.fail(
         new ProcessError({
@@ -101,10 +111,13 @@ export const artifactExists = (cwd: string, pattern: string) =>
       )
     : Effect.tryPromise({
         try: async () => {
+          const found: string[] = []
           for await (const match of glob(pattern, { cwd })) {
-            if (!NodePath.relative(cwd, NodePath.resolve(cwd, match)).startsWith("..")) return true
+            if (NodePath.relative(cwd, NodePath.resolve(cwd, match)).startsWith("..")) continue
+            found.push(match)
+            if (found.length >= limit) break
           }
-          return false
+          return found
         },
         catch: (cause) =>
           new ProcessError({ kind: "io", detail: `glob ${pattern} in ${cwd}: ${String(cause)}` }),
@@ -128,7 +141,7 @@ const evaluate = (
 ): Effect.Effect<RuleResult, ProcessError> =>
   Effect.map(
     rule._tag === "ArtifactExists"
-      ? artifactExists(cwd, rule.glob)
+      ? Effect.map(matchArtifacts(cwd, rule.glob, 1), (found) => found.length > 0)
       : matchesPattern(rule.pattern, rule._tag === "StdoutMatches" ? stdout : stderr),
     (passed) => ({ rule, passed }),
   )

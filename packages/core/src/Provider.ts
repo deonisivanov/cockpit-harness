@@ -3,8 +3,13 @@ import { ProcessError, ProviderError } from "./errors.js"
 import { SessionId } from "./ids.js"
 import { ProcessSupervisor } from "./ProcessSupervisor.js"
 
+/**
+ * `read-plus-output` is what an analysing or verifying block needs: it must not touch the repository,
+ * but it still has to deliver its result to `$COCKPIT_OUTPUT`, which sits outside the worktree.
+ */
 export const PermissionProfile = Schema.Literal(
   "read-only",
+  "read-plus-output",
   "workspace-write",
   "workspace-write-network",
 )
@@ -48,6 +53,8 @@ export interface ProviderRunOptions {
   readonly sessionId?: SessionId
   readonly resumeSessionId?: SessionId
   readonly permissionProfile: PermissionProfile
+  /** The run directory holding `$COCKPIT_OUTPUT`; granted to the child on top of its worktree. */
+  readonly outputDir?: string
   readonly timeoutMs: number
   readonly env?: Readonly<Record<string, string>>
 }

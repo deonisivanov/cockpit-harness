@@ -3,7 +3,9 @@ import { ValidationError } from "./errors.js"
 import { BlockId } from "./ids.js"
 import {
   BlockDef,
+  BlockOverrides,
   ContractField,
+  PluginBinding,
   Predicate,
   RetryPolicy,
   WorkflowNode,
@@ -36,6 +38,16 @@ export const blocksIn = (node: WorkflowNode): ReadonlyArray<BlockNode> => {
       return []
   }
 }
+
+/**
+ * The binding a block will actually run under: the definition's, unless the Analyzer picked one
+ * from the template's allowed set. Every rule that reasons about plugins reads it through here, so
+ * a chosen binding is subject to the same checks as a declared one.
+ */
+export const bindingOf = (
+  def: BlockDef,
+  overrides?: BlockOverrides,
+): PluginBinding | undefined => overrides?.binding ?? def.binding
 
 const writesWorkspace = (node: WorkflowNode, defs: ReadonlyMap<string, BlockDef>) =>
   blocksIn(node).some((block) => defs.get(block.def)?.workspaceAccess === "write")
@@ -146,6 +158,14 @@ export const validateWorkflow = (
             at,
             `expected artifact glob must stay inside the worktree: ${expected.glob}`,
           ),
+        )
+      }
+    }
+
+    for (const glob of bindingOf(def, node.overrides)?.stateFiles ?? []) {
+      if (escapesWorktree(glob)) {
+        errors.push(
+          fail("plugin-state-files", at, `plugin state glob must stay inside the worktree: ${glob}`),
         )
       }
     }
@@ -285,12 +305,14 @@ export const validateWorkflow = (
 
         if (policy !== undefined && policy.maxAttempts > 1) {
           for (const block of body) {
-            if (defs.get(block.def)?.binding?.managesInternalRetries === true) {
+            const def = defs.get(block.def)
+            const binding = def === undefined ? undefined : bindingOf(def, block.overrides)
+            if (binding?.managesInternalRetries === true) {
               errors.push(
                 fail(
                   "double-retry",
                   [...path, block.id],
-                  `${block.def} manages its own retries, so the loop around it must allow a single attempt`,
+                  `${block.def} runs through ${binding.entry.name}, which manages its own retries, so the loop around it must allow a single attempt`,
                 ),
               )
             }

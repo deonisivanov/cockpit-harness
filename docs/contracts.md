@@ -44,9 +44,10 @@ type WorkflowNode =
 interface WorkflowTree {
   runId: RunId
   templateId: string
-  nodes: WorkflowNode           // root
-  analyzer: AnalyzerDecision    // provenance, shown in UI
-  transformsApplied: { name: string; diffRef: ArtifactId }[]
+  root: WorkflowNode
+  // settled in Phase 5: analyzer/transformsApplied provenance lives in the journal
+  // (TreeAnalyzed carries the decision + rationale, TreeTransformed carries diff artifact refs);
+  // the UI reads events, not an in-tree copy
 }
 ```
 
@@ -90,7 +91,8 @@ interface BlockDef<I, O> {
   sessionPolicy: "fresh" | "continue"        // default "fresh" (ADR-004)
   retryPolicy: RetryPolicyRef
   timeoutMs: number
-  permissionProfile: "read-only" | "workspace-write" | "workspace-write-network"
+  permissionProfile: "read-only" | "read-plus-output" | "workspace-write" | "workspace-write-network"
+                                    // read-plus-output: no repository writes, but $COCKPIT_OUTPUT stays writable
   workspaceAccess: "read" | "write"
   expectedArtifacts?: { glob: string; required: boolean }[]
   successCriteria: SuccessCriterion[]        // machine-checkable; verifier blocks emit evidence for these
@@ -104,7 +106,7 @@ interface BlockDef<I, O> {
 interface PluginBinding {
   plugin?: string                   // e.g. "oh-my-claudecode"; absent = bare provider session
   entry: { kind: "slash" | "skill" | "agent"; name: string }   // e.g. slash "oh-my-claudecode:plan"
-  argsTemplate?: string             // rendered with block input
+  argsTemplate?: string             // rendered with the composed block prompt (v1)
   extraInstructions?: string
   requiredCapabilities: string[]    // preflight-checked against the plugin catalog
   minVersion?: string
@@ -114,7 +116,7 @@ interface PluginBinding {
 }
 ```
 
-Preflight result, recorded per run: `{ provider: { name, version }, plugin?: { name, version }, entryResolved: boolean, capabilities: string[] }`.
+Preflight result, recorded per run: `{ provider: { name, version }, plugin?: { name, version }, entry?: PluginEntry, capabilities: string[] }`. An entry that cannot be resolved is a preflight failure, never a recorded result.
 
 ## 6. Context handoff envelope
 
@@ -263,7 +265,7 @@ export default defineCartridge({
 })
 ```
 
-`defineCartridge` returns the config Schema-validated at load; all types are exported so the cartridge compiles under the project's own `tsc`. Everything is data + pure functions; cartridge code performs no IO at load time (enforced by review + loader timeout).
+`defineCartridge` returns the config Schema-validated at load; all types are exported so the cartridge compiles under the project's own `tsc`. Everything is data + pure functions; cartridge code performs no IO at load time. That rule is upheld by review, not by the runtime — cartridge code runs with the daemon's own privileges (ADR-007), and the loader timeout only catches a load that stalls asynchronously, not synchronous IO or CPU.
 
 ## 12. Task brief (canonical continuation session seed)
 

@@ -10,6 +10,7 @@ import {
   ProviderRunOptions,
   runToResult,
   SessionId,
+  verifyOutput,
 } from "../src/index.js"
 import { fixturePath, ProviderContext, runProviders, tempDir } from "./helpers.js"
 
@@ -188,6 +189,38 @@ it("withholds the write and exec tools from a read-only claude block", () => {
     "--disallowedTools",
     "Write,Edit,NotebookEdit,Bash",
   ])
+})
+
+it("lets a read-plus-output block write its result without opening the repository to it", () => {
+  // The profile the verifier ships with: it judges the worktree, but its verdict is a file.
+  expect(verifyOutput.permissionProfile).toBe("read-plus-output")
+
+  const claude = claudeArgv("claude", {
+    ...options({ permissionProfile: "read-plus-output", outputDir: "/runs/r1" }),
+    cwd: "/w",
+  })
+  // Plan mode would withhold Write, which is the one tool this profile exists to grant.
+  expect(claude).not.toContain("plan")
+  expect(claude.join(" ")).toContain(
+    "--permission-mode acceptEdits --disallowedTools Edit,NotebookEdit,Bash --allowedTools Write --add-dir /runs/r1",
+  )
+
+  const codex = codexArgv("codex", {
+    ...options({ permissionProfile: "read-plus-output", outputDir: "/runs/r1" }),
+    cwd: "/w",
+  })
+  expect(codex).toContain("sandbox_mode=workspace-write")
+  expect(codex).toContain('sandbox_workspace_write.writable_roots=["/runs/r1"]')
+
+  // A writing block keeps the profile it always had, plus the reach to its own result file.
+  const writing = claudeArgv("claude", {
+    ...options({ permissionProfile: "workspace-write", outputDir: "/runs/r1" }),
+    cwd: "/w",
+  })
+  expect(writing.join(" ")).toContain(
+    "--permission-mode acceptEdits --allowedTools Bash --add-dir /runs/r1",
+  )
+  expect(writing).not.toContain("--disallowedTools")
 })
 
 it("maps permission profiles onto the codex sandbox", () => {

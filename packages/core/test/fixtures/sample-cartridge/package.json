@@ -1,0 +1,13 @@
+{
+  "name": "sample-cartridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@cockpit/cartridge-kit": "workspace:*",
+    "typescript": "5.9.3"
+  }
+}

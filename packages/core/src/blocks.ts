@@ -53,7 +53,7 @@ export const verifyOutput: BlockDef = {
   sessionPolicy: "fresh",
   retryPolicy: singleAttemptPolicy.id,
   timeoutMs: 10 * minute,
-  permissionProfile: "read-only",
+  permissionProfile: "read-plus-output",
   workspaceAccess: "read",
   successCriteria: [
     {

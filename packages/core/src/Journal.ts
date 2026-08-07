@@ -550,7 +550,9 @@ export const JournalLive = Layer.effect(
         commitVoid(
           "recordArtifact",
           Effect.gen(function* () {
-            yield* requireRunStatus("recordArtifact", input.runId, ["running"])
+            // `created` too: the Analyzer's prompt and decision belong to the run that is being
+            // planned, and planning happens before the engine starts it.
+            yield* requireRunStatus("recordArtifact", input.runId, ["created", "running"])
             yield* requireAbsent("recordArtifact", "artifacts", input.artifactId)
             // No parent join, unlike checkpoints: an approval payload belongs to a gate, and a
             // gate has an id without ever becoming a block row.

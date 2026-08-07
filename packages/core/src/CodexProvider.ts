@@ -16,6 +16,12 @@ import { ProcessSupervisor } from "./ProcessSupervisor.js"
 
 const codexBinary = Config.string("COCKPIT_CODEX_BIN").pipe(Config.withDefault("codex"))
 
+/**
+ * `read-plus-output` lands on workspace-write: the sandbox has no read-only mode with a writable
+ * root, and `writable_roots` is only consulted under workspace-write. The worktree is therefore
+ * writable to such a block on codex, and only the prompt and the deny-nothing sandbox stand between
+ * it and an edit — claude-code scopes this profile properly, codex does not.
+ */
 const sandbox = (profile: PermissionProfile) =>
   profile === "read-only" ? "read-only" : "workspace-write"
 
@@ -36,6 +42,11 @@ export const codexArgv = (
   ...(options.permissionProfile === "workspace-write-network"
     ? ["-c", "sandbox_workspace_write.network_access=true"]
     : []),
+  // The result file lives outside the worktree, and `--add-dir` is not accepted by `exec resume`,
+  // so the writable root rides the config override both forms share. The value is parsed as TOML.
+  ...(options.outputDir === undefined
+    ? []
+    : ["-c", `sandbox_workspace_write.writable_roots=[${JSON.stringify(options.outputDir)}]`]),
   // Everything after `--` is the prompt operand, so a prompt opening with `-` stays data.
   "--",
   options.prompt,

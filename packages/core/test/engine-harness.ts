@@ -13,7 +13,16 @@ import {
   WorkflowNode,
   WorkspaceManager,
 } from "../src/index.js"
-import { EngineContext, fixturePath, makeRepo, readEvents, runEngine, tempDir, tempHome } from "./helpers.js"
+import {
+  EngineContext,
+  fixturePath,
+  makeRepo,
+  readEvents,
+  runEngine,
+  Settings,
+  tempDir,
+  tempHome,
+} from "./helpers.js"
 import { catalog } from "./trees.js"
 
 export { block, catalog, id } from "./trees.js"
@@ -61,18 +70,36 @@ export interface Harness {
   ) => Effect.Effect<RunOutcome, unknown, EngineContext>
 }
 
+/** Both adapters and the preflight `--version` probe point at the scripted stand-in. */
+export const fakeProviders: Settings = {
+  COCKPIT_CLAUDE_BIN: fixturePath("fake-provider.mjs"),
+  COCKPIT_CODEX_BIN: fixturePath("fake-provider.mjs"),
+  COCKPIT_KILL_GRACE_MS: "200",
+}
+
+/**
+ * The stand-in reads its script from the environment it is spawned with, not from Effect config.
+ * The directory is returned because its name is unique, which makes it a run id no other test
+ * running alongside can collide with.
+ */
+export const writeScript = async (script: FakeScript) => {
+  const dir = await tempDir("cockpit-script-")
+  await writeFile(NodePath.join(dir, "script.json"), JSON.stringify(script))
+  process.env.COCKPIT_FAKE_SCRIPT = NodePath.join(dir, "script.json")
+  return RunId.make(`run-${NodePath.basename(dir)}`)
+}
+
 export const withEngine = async <A, E>(
   script: FakeScript,
   body: (harness: Harness) => Effect.Effect<A, E, EngineContext>,
+  settings: Settings = {},
+  prompt = "make the thing work",
 ) => {
   const home = await tempHome()
   const { repoPath, baseCommit } = await makeRepo()
-  const scriptDir = await tempDir("cockpit-script-")
-  const scriptPath = NodePath.join(scriptDir, "script.json")
-  await writeFile(scriptPath, JSON.stringify(script))
-  process.env.COCKPIT_FAKE_SCRIPT = scriptPath
-
-  const runId = RunId.make(`run-${NodePath.basename(scriptDir)}`)
+  // An empty config dir, so a run's preflight sees the plugins a test installs and no others.
+  const pluginHome = await tempDir("cockpit-claude-")
+  const runId = await writeScript(script)
 
   return runEngine(
     home,
@@ -85,7 +112,7 @@ export const withEngine = async <A, E>(
       yield* journal.createRun({
         runId,
         projectId: "proj",
-        prompt: "make the thing work",
+        prompt,
         baseCommit,
         worktreePath: workspace.path,
         branch: workspace.branch,
@@ -97,16 +124,13 @@ export const withEngine = async <A, E>(
         start: (root, given) =>
           engine.run({
             runId,
-            task: { prompt: "make the thing work", projectId: "proj" },
+            task: { prompt, projectId: "proj" },
             tree: { runId, templateId: "test", root },
             workspace,
             catalog: given ?? catalog(),
           }),
       })
     }),
-    {
-      COCKPIT_CLAUDE_BIN: fixturePath("fake-provider.mjs"),
-      COCKPIT_KILL_GRACE_MS: "200",
-    },
+    { ...fakeProviders, CLAUDE_CONFIG_DIR: pluginHome, ...settings },
   )
 }

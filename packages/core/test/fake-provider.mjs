@@ -2,11 +2,18 @@
 // Scripted stand-in for the claude/codex binaries. Selected with COCKPIT_CLAUDE_BIN /
 // COCKPIT_CODEX_BIN so the adapters keep using their real spawn, stream and kill path.
 
-import { readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 
 const argv = process.argv.slice(2)
 const scenario = process.env.COCKPIT_FAKE_SCENARIO ?? "success"
 const claudeFormat = argv.includes("--output-format")
+
+// The preflight probe, which asks nothing else of the binary.
+if (argv[0] === "--version") {
+  process.stdout.write("9.9.9 (fake provider)\n")
+  process.exit(0)
+}
 
 /**
  * Engine tests script behaviour per block and per call instead of per process: COCKPIT_FAKE_SCRIPT
@@ -64,7 +71,10 @@ if (step !== undefined) {
       symlinkSync(step.symlinkOutputTo, process.env.COCKPIT_OUTPUT)
     }
     if (step.writes) {
-      for (const [name, content] of Object.entries(step.writes)) writeFileSync(name, content)
+      for (const [name, content] of Object.entries(step.writes)) {
+        mkdirSync(dirname(name), { recursive: true })
+        writeFileSync(name, content)
+      }
     }
     if (step.stderr) process.stderr.write(step.stderr)
     // Before any result event, so the adapter classifies it as a crash rather than a verdict.
