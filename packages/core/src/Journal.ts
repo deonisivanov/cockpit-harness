@@ -80,6 +80,8 @@ export class Journal extends Context.Tag("cockpit/Journal")<
     readonly runStatus: (runId: RunId) => Effect.Effect<RunStatus, JournalError>
 
     readonly createRun: (input: CreateRunInput) => Effect.Effect<void, JournalError>
+    /** Planning settled on a tree; the run waits there until a human starts or cancels it. */
+    readonly awaitStart: (runId: RunId) => Effect.Effect<void, JournalError>
     readonly startRun: (runId: RunId) => Effect.Effect<void, JournalError>
     readonly finishRun: (
       runId: RunId,
@@ -424,11 +426,21 @@ export const JournalLive = Layer.effect(
           }),
         ),
 
+      awaitStart: (runId) =>
+        commitVoid(
+          "awaitStart",
+          Effect.gen(function* () {
+            yield* requireRunStatus("awaitStart", runId, ["created"])
+            yield* sql`UPDATE runs SET status = ${"awaiting-start"} WHERE id = ${runId}`
+            return { runId, payload: { _tag: "RunAwaitingStart" } as const }
+          }),
+        ),
+
       startRun: (runId) =>
         commitVoid(
           "startRun",
           Effect.gen(function* () {
-            yield* requireRunStatus("startRun", runId, ["created"])
+            yield* requireRunStatus("startRun", runId, ["created", "awaiting-start"])
             yield* sql`UPDATE runs SET status = ${"running"} WHERE id = ${runId}`
             return { runId, payload: { _tag: "RunStarted" } as const }
           }),
@@ -437,10 +449,16 @@ export const JournalLive = Layer.effect(
       finishRun: (runId, status) =>
         closeRun("finishRun", runId, ["running"], status, { _tag: "RunFinished", status }),
 
+      // Interrupted is cancellable too: an open run nobody is executing is discarded here or
+      // nowhere, since there is no fiber left to interrupt.
       cancelRun: (runId) =>
-        closeRun("cancelRun", runId, ["created", "running"], "cancelled", {
-          _tag: "RunCancelled",
-        }),
+        closeRun(
+          "cancelRun",
+          runId,
+          ["created", "awaiting-start", "running", "interrupted"],
+          "cancelled",
+          { _tag: "RunCancelled" },
+        ),
 
       stopRun: (runId) =>
         closeRun("stopRun", runId, ["created", "running"], "interrupted", {

@@ -135,6 +135,29 @@ it("leaves runs in a terminal status untouched", async () => {
   expect(result.status).toBe("succeeded")
 })
 
+// The scan's SQL is an allowlist, so a run waiting for its human decision is excluded by
+// construction — this pins that, since marking it interrupted would strand the wait state.
+it("leaves a run waiting to start alone across a boot, still startable", async () => {
+  const result = await runKernel(
+    await tempHome(),
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const waiting = RunId.make("run-waiting")
+      yield* journal.createRun({ runId: waiting, projectId: "p", prompt: "x" })
+      yield* journal.awaitStart(waiting)
+
+      const recovered = yield* recoverInterruptedRuns
+      const afterBoot = yield* journal.runStatus(waiting)
+      yield* journal.startRun(waiting)
+      return { recovered, afterBoot, started: yield* journal.runStatus(waiting) }
+    }),
+  )
+
+  expect(result.recovered).toEqual([])
+  expect(result.afterBoot).toBe("awaiting-start")
+  expect(result.started).toBe("running")
+})
+
 it("marks a run with no checkpoints as interrupted without one", async () => {
   const events = await runKernel(
     await tempHome(),

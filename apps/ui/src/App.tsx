@@ -7,8 +7,11 @@ import {
   buildRows,
   filterRows,
   fmtElapsed,
+  REGENERATE_TITLE,
   RESUME_TITLE,
   resumable,
+  RUN_TITLE,
+  startable,
   TERMINAL_TITLE,
   TERMINAL_WRITE_WARNING,
   terminalNote,
@@ -23,6 +26,7 @@ type ActionScope = "gate" | "question" | "run" | "start" | "terminal" | "project
 
 const STATUS_TONE: Record<RunStatus, string> = {
   created: "border-blue/25 bg-blue/8 text-blue",
+  "awaiting-start": "border-amber/30 bg-amber/8 text-amber",
   running: "border-vio/30 bg-vio/8 text-vio",
   succeeded: "border-green/30 bg-green/8 text-green",
   failed: "border-red/30 bg-red/8 text-red",
@@ -106,18 +110,23 @@ export default function App() {
     }
   }, [source, runId])
 
-  // The engine starts strictly after the workflow-tree artifact is written, so `running` is the
-  // signal that a run created from idle now has a tree to fetch.
+  // The tree artifact is written as the analyzer settles, which is what TreeAnalyzed narrates —
+  // a truer signal than the run's status, and it also catches the tree a Regenerate replaced.
+  const analyses = useMemo(
+    () => state.events.filter((e) => e.payload._tag === "TreeAnalyzed").length,
+    [state.events],
+  )
   useEffect(() => {
-    if (!runId || detail?.tree || state.runStatus !== "running") return
+    if (!runId || analyses === 0) return
     let live = true
     void source.run(runId).then((d) => live && setDetail(d))
     return () => {
       live = false
     }
-  }, [source, runId, detail?.tree, state.runStatus])
+  }, [source, runId, analyses])
 
   const isLive = state.runStatus === "running" || state.runStatus === "created"
+  const waitingToStart = startable(state.runStatus)
   useEffect(() => {
     if (!isLive) return
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -186,6 +195,19 @@ export default function App() {
   const stop = useCallback(() => {
     if (!runId) return
     void act("run", () => source.stop(runId))
+  }, [act, source, runId])
+
+  const runNow = useCallback(() => {
+    if (!runId) return
+    void act("run", async () => {
+      await source.start(runId)
+      if (project) setRuns(await source.runs(project.id))
+    })
+  }, [act, source, runId, project])
+
+  const regenerate = useCallback(() => {
+    if (!runId) return
+    void act("run", () => source.regenerate(runId))
   }, [act, source, runId])
 
   const skipBlock = useCallback(
@@ -369,29 +391,53 @@ export default function App() {
                 </span>
                 {note && <span className="font-sans text-[11.5px] text-ink-4">· {note}</span>}
                 <div className="flex-1" />
-                {isLive && (
+                {waitingToStart && (
                   <>
                     <button
                       type="button"
-                      data-testid="stop-run"
+                      data-testid="run-workflow"
                       disabled={busy}
-                      onClick={stop}
-                      title="Stops the run; it stays resumable from its last confirmed checkpoint"
-                      className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
+                      onClick={runNow}
+                      title={RUN_TITLE}
+                      className="rounded-md border border-green/35 bg-green/10 px-3.5 py-1.5 font-sans text-[12px] font-semibold text-green hover:bg-green/18 disabled:opacity-40"
                     >
-                      Stop
+                      Run
                     </button>
                     <button
                       type="button"
-                      data-testid="cancel-run"
+                      data-testid="regenerate-workflow"
                       disabled={busy}
-                      onClick={cancel}
-                      title="Ends the run for good; a cancelled run cannot be resumed"
-                      className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
+                      onClick={regenerate}
+                      title={REGENERATE_TITLE}
+                      className="rounded-md border border-white/12 px-3 py-1.5 font-sans text-[12px] font-medium text-ink-2 hover:border-vio/40 hover:text-ink disabled:opacity-40"
                     >
-                      Cancel
+                      Regenerate
                     </button>
                   </>
+                )}
+                {isLive && (
+                  <button
+                    type="button"
+                    data-testid="stop-run"
+                    disabled={busy}
+                    onClick={stop}
+                    title="Stops the run; it stays resumable from its last confirmed checkpoint"
+                    className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
+                  >
+                    Stop
+                  </button>
+                )}
+                {(isLive || waitingToStart) && (
+                  <button
+                    type="button"
+                    data-testid="cancel-run"
+                    disabled={busy}
+                    onClick={cancel}
+                    title="Ends the run for good; a cancelled run cannot be resumed"
+                    className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
                 )}
                 {resumable(state.runStatus) && (
                   <button
@@ -564,7 +610,7 @@ function IdleScreen({
             onClick={onStart}
             className="rounded-md border border-vio/35 bg-vio/11 px-3.5 py-1.5 font-mono text-[11.5px] font-medium text-vio-hi hover:bg-vio/20 disabled:opacity-40"
           >
-            Analyze &amp; run ⏎
+            Analyze ⏎
           </button>
         </div>
         {error && (

@@ -41,9 +41,10 @@ pnpm --filter cockpit-ui dev
 # then open the URL Vite prints, with ?mock=running appended
 ```
 
-The ten states are `idle`, `analyzing`, `approval`, `running`, `retry`, `question`, `finished`,
-`cancelled`, `recovery`, `insights`. `recovery` shows an interrupted run with its Resume button;
-`insights` opens the retrospective view directly.
+The eleven states are `idle`, `analyzing`, `awaiting-start`, `approval`, `running`, `retry`,
+`question`, `finished`, `cancelled`, `recovery`, `insights`. `awaiting-start` shows a planned
+workflow with its Run and Regenerate buttons; `recovery` shows an interrupted run with its Resume
+button; `insights` opens the retrospective view directly.
 
 ## Playwright
 

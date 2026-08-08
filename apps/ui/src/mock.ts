@@ -14,6 +14,7 @@ import type { Source } from "./api.js"
 export const MOCK_STATES = [
   "idle",
   "analyzing",
+  "awaiting-start",
   "approval",
   "running",
   "retry",
@@ -457,6 +458,21 @@ function fixture(state: MockState): Fixture {
     return { events: b.events, status: "running", streamFrom: 1 }
   }
 
+  if (state === "awaiting-start") {
+    b.push({ _tag: "RunCreated", projectId: PROJECT, prompt: PROMPT })
+    b.push({
+      _tag: "TreeAnalyzed",
+      templateId: "bugfix-with-reproduction",
+      rationale:
+        "The issue body contains a stack trace and a user-visible symptom, and the repo has an rspec suite with a reproduction harness.",
+      decision: { template: "bugfix-with-reproduction", visualBlocks: true, reviewLoop: true },
+      fallback: false,
+    })
+    b.push({ _tag: "TreeValidated", errors: [] })
+    b.push({ _tag: "RunAwaitingStart" })
+    return { events: b.events, status: "awaiting-start", streamFrom: b.events.length }
+  }
+
   prelude(b)
 
   if (state === "approval") {
@@ -616,6 +632,18 @@ export function mockSource(state: MockState): Source {
       return planned
     },
     createRun: async () => ({ runId: RUN }),
+    start: async () => {
+      emit({ _tag: "RunStarted" })
+    },
+    regenerate: async () => {
+      emit({
+        _tag: "TreeAnalyzed",
+        templateId: "quickfix",
+        rationale: "Regenerated: the task reads as a small, local change after all.",
+        decision: { template: "quickfix" },
+        fallback: false,
+      })
+    },
     artifact: async (id) => {
       const a = ARTIFACTS[id]
       if (!a) throw new Error(`unknown artifact ${id}`)

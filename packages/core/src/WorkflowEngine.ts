@@ -351,8 +351,9 @@ export const WorkflowEngineLive = Layer.effect(
         if (invalid !== undefined) return yield* Effect.fail(invalid)
 
         const plan = request.resume
-        // A resumed run was re-opened by whoever reconciled its worktree; it is already running.
-        if (plan === undefined) yield* journal.startRun(runId)
+        // The caller may already own the transition: a resume re-opens the run while reconciling
+        // its worktree, and a start claims it out of `awaiting-start` before forking this fiber.
+        if ((yield* journal.runStatus(runId)) !== "running") yield* journal.startRun(runId)
 
         yield* Ref.update(skips, (set) =>
           [...(request.skips ?? []), ...(plan?.skips ?? [])].reduce(

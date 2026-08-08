@@ -95,7 +95,82 @@ it("walks a run through the legal lifecycle and journals each transition", async
   expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
 })
 
+it("holds a planned run at awaiting-start until a decision moves it", async () => {
+  const [waiting, running, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.awaitStart(runId)
+      const waiting = yield* journal.runStatus(runId)
+      yield* journal.startRun(runId)
+      return [waiting, yield* journal.runStatus(runId), yield* readEvents(runId)] as const
+    }),
+  )
+
+  expect(waiting).toBe("awaiting-start")
+  expect(running).toBe("running")
+  expect(payloads(events)).toEqual(["RunCreated", "RunAwaitingStart", "RunStarted"])
+})
+
+it("discards a waiting run, and one nobody is executing any more", async () => {
+  const closed = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const waiting = RunId.make("run-waiting")
+      const interrupted = RunId.make("run-interrupted")
+      yield* journal.createRun({ runId: waiting, projectId: "p", prompt: "x" })
+      yield* journal.awaitStart(waiting)
+      yield* journal.cancelRun(waiting)
+
+      yield* journal.createRun({ runId: interrupted, projectId: "p", prompt: "x" })
+      yield* journal.startRun(interrupted)
+      yield* journal.stopRun(interrupted)
+      yield* journal.cancelRun(interrupted)
+
+      return [yield* journal.runStatus(waiting), yield* journal.runStatus(interrupted)] as const
+    }),
+  )
+
+  expect(closed).toEqual(["cancelled", "cancelled"])
+})
+
 const illegal = [
+  {
+    name: "parking a run that is already running",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.startRun(runId)
+        yield* journal.awaitStart(runId)
+      }),
+  },
+  {
+    name: "parking a waiting run a second time",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.awaitStart(runId)
+        yield* journal.awaitStart(runId)
+      }),
+  },
+  {
+    name: "stopping a run that is only waiting to start",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.awaitStart(runId)
+        yield* journal.stopRun(runId)
+      }),
+  },
+  {
+    name: "resuming a run that never ran",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.awaitStart(runId)
+        yield* journal.resumeRun(runId)
+      }),
+  },
   {
     name: "starting a run twice",
     steps: (journal: JournalService) =>

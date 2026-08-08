@@ -6,6 +6,7 @@ import {
   events,
   json,
   makeRepo,
+  startRun,
   tagged,
   tempDir,
   waitFor,
@@ -17,12 +18,6 @@ const minutes = 60_000
 
 const register = (client: Api, repoPath: string) =>
   Effect.map(client.post("/api/projects", { name: "sample", repoPath }), json<ProjectRow>)
-
-const startRun = (client: Api, projectId: string, prompt: string) =>
-  Effect.map(
-    client.post("/api/runs", { projectId, prompt }),
-    json<{ readonly runId: string }>,
-  )
 
 const finished = (found: ReadonlyArray<JournalEvent>) =>
   tagged(found, "RunFinished").length + tagged(found, "RunCancelled").length > 0
@@ -257,6 +252,244 @@ it(
   2 * minutes,
 )
 
+const waiting = (found: ReadonlyArray<JournalEvent>) =>
+  tagged(found, "RunAwaitingStart").length > 0
+
+const trees = (found: ReadonlyArray<JournalEvent>) =>
+  tagged(found, "ArtifactCreated").filter(
+    (event) => (event.payload as { kind: string }).kind === "workflow-tree",
+  ).length
+
+const plan = (client: Api, projectId: string, prompt: string) =>
+  Effect.map(client.post("/api/runs", { projectId, prompt }), json<{ readonly runId: string }>)
+
+const detailOf = (client: Api, runId: string) =>
+  Effect.map(
+    client.get(`/api/runs/${runId}`),
+    json<{
+      run: RunRow
+      tree?: WorkflowTree
+      blocks: ReadonlyArray<{ id: string }>
+    }>,
+  )
+
+it(
+  "plans the workflow, waits for a decision, and executes only when asked",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const created = yield* client.post("/api/runs", {
+          projectId: project.id,
+          prompt: "small fix",
+        })
+        const runId = json<{ readonly runId: string }>(created).runId
+        yield* waitFor(runId, waiting)
+
+        const parked = yield* detailOf(client, runId)
+        const stopped = yield* client.post(`/api/runs/${runId}/stop`)
+        const started = yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        const again = yield* client.post(`/api/runs/${runId}/start`)
+        return {
+          again,
+          created,
+          parked,
+          run: yield* detailOf(client, runId),
+          started,
+          stopped,
+          found: yield* events(runId),
+        }
+      }),
+    )
+
+    expect(result.created.status).toBe(202)
+    // The tree is durable and queryable before a single block exists.
+    expect(result.parked.run.status).toBe("awaiting-start")
+    expect(result.parked.tree?.templateId).toBe("quickfix")
+    expect(result.parked.blocks).toEqual([])
+    // Stopping is not the verb for a run that never started; cancel is.
+    expect(result.stopped.status).toBe(409)
+    expect(json<{ detail: string }>(result.stopped).detail).toContain("cancel it instead")
+
+    expect(result.started.status).toBe(202)
+    expect(result.run.run.status).toBe("succeeded")
+    expect(result.again.status).toBe(409)
+    expect(tagged(result.found, "RunStarted")).toHaveLength(1)
+    const tags = result.found.map((event) => event.payload._tag)
+    expect(tags.indexOf("RunAwaitingStart")).toBeLessThan(tags.indexOf("RunStarted"))
+  },
+  2 * minutes,
+)
+
+it(
+  "regenerates the workflow, and the newest tree is the one that runs",
+  async () => {
+    writeScript({
+      "analyzer:1": chooses("task", { focus: "the parser" }),
+      "analyzer:2": chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "rename the parser field")
+        yield* waitFor(runId, waiting)
+        const first = yield* detailOf(client, runId)
+
+        const regenerated = yield* client.post(`/api/runs/${runId}/regenerate`)
+        yield* waitFor(runId, (found) => trees(found) > 1)
+        const second = yield* detailOf(client, runId)
+
+        yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return {
+          first,
+          regenerated,
+          second,
+          run: yield* detailOf(client, runId),
+          found: yield* events(runId),
+        }
+      }),
+    )
+
+    expect(result.regenerated.status).toBe(202)
+    expect(result.first.tree?.templateId).toBe("task")
+    // Newest artifact wins: the run is still waiting, holding a different workflow.
+    expect(result.second.run.status).toBe("awaiting-start")
+    expect(result.second.tree?.templateId).toBe("quickfix")
+    expect(result.run.run.status).toBe("succeeded")
+    // `task` would have parked on its plan gate; the regenerated `quickfix` has none.
+    expect(tagged(result.found, "ApprovalRequested")).toHaveLength(0)
+    expect(tagged(result.found, "BlockStarted").map((event) => event.blockId)).toEqual([
+      "implement",
+      "verify",
+    ])
+  },
+  2 * minutes,
+)
+
+it(
+  "cancels a run that is waiting to start, and one no fiber is holding any more",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        // A waiting run never had a fiber, so cancel has to reach the journal directly.
+        const parked = yield* plan(client, project.id, "small fix")
+        yield* waitFor(parked.runId, waiting)
+        const cancelledWaiting = yield* client.post(`/api/runs/${parked.runId}/cancel`)
+
+        // Same fiber-less path, on the run a stop left open and resumable.
+        const { runId } = yield* startRun(client, project.id, "hang forever")
+        yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length > 0)
+        yield* client.post(`/api/runs/${runId}/stop`)
+        const cancelledStopped = yield* client.post(`/api/runs/${runId}/cancel`)
+
+        return {
+          cancelledStopped,
+          cancelledWaiting,
+          stopped: yield* detailOf(client, runId),
+          waiting: yield* detailOf(client, parked.runId),
+        }
+      }),
+    )
+
+    expect(result.cancelledWaiting.status).toBe(200)
+    expect(result.waiting.run.status).toBe("cancelled")
+    expect(result.cancelledStopped.status).toBe(200)
+    expect(result.stopped.run.status).toBe("cancelled")
+  },
+  2 * minutes,
+)
+
+it(
+  "keeps a waiting run startable after the daemon that planned it is gone",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+    const home = tempDir("cockpitd-waiting-home-")
+
+    const runId = await withApi(
+      (client) =>
+        Effect.gen(function* () {
+          const project = yield* register(client, repoPath)
+          const { runId } = yield* plan(client, project.id, "small fix")
+          yield* waitFor(runId, waiting)
+          return runId
+        }),
+      { COCKPIT_HOME: home },
+    )
+
+    // Second daemon, same journal: the wait is a row, so nothing had to be kept alive for it.
+    const after = await withApi(
+      (client) =>
+        Effect.gen(function* () {
+          const booted = yield* detailOf(client, runId)
+          const started = yield* client.post(`/api/runs/${runId}/start`)
+          yield* waitFor(runId, finished)
+          return { booted, started, run: yield* detailOf(client, runId) }
+        }),
+      { COCKPIT_HOME: home },
+    )
+
+    expect(after.booted.run.status).toBe("awaiting-start")
+    expect(after.booted.tree?.templateId).toBe("quickfix")
+    expect(after.started.status).toBe(202)
+    expect(after.run.run.status).toBe("succeeded")
+  },
+  2 * minutes,
+)
+
+it(
+  "accepts a skip while the run waits, and honours it once the run starts",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, waiting)
+
+        const accepted = yield* client.post(`/api/runs/${runId}/blocks/verify/skip`)
+        yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return { accepted, found: yield* events(runId) }
+      }),
+    )
+
+    expect(result.accepted.status).toBe(202)
+    const skipped = tagged(result.found, "BlockSkipped")
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].blockId).toBe("verify")
+    expect(tagged(result.found, "RunFinished")[0].payload).toMatchObject({ status: "succeeded" })
+  },
+  2 * minutes,
+)
+
 it(
   "accepts a safe skip, performs it, and refuses skipping the block that is running",
   async () => {
@@ -305,15 +538,23 @@ it(
     const result = await withApi((client) =>
       Effect.gen(function* () {
         const project = yield* register(client, repoPath)
-        const { runId } = yield* startRun(client, project.id, "small fix")
+        // Not the harness helper: this one must act while the analyzer is still thinking.
+        const { runId } = yield* Effect.map(
+          client.post("/api/runs", { projectId: project.id, prompt: "small fix" }),
+          json<{ readonly runId: string }>,
+        )
         const stopped = yield* client.post(`/api/runs/${runId}/stop`)
+        const started = yield* client.post(`/api/runs/${runId}/start`)
         const cancelled = yield* client.post(`/api/runs/${runId}/cancel`)
-        return { stopped, cancelled }
+        return { stopped, started, cancelled }
       }),
     )
 
     expect(result.stopped.status).toBe(409)
     expect(json<{ detail: string }>(result.stopped).detail).toContain("cancel it instead")
+    // Run is offered on a planned workflow, and a run mid-planning has none to show yet.
+    expect(result.started.status).toBe(409)
+    expect(json<{ detail: string }>(result.started).detail).toContain("is created")
     expect(result.cancelled.status).toBe(200)
   },
   2 * minutes,

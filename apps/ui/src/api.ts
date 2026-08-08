@@ -15,7 +15,11 @@ export interface Source extends EventSource {
   createProject(name: string, repoPath: string): Promise<Project>
   runs(projectId: string): Promise<readonly Run[]>
   run(runId: string): Promise<RunDetail>
+  /** Plans the run and stops; it executes only once `start` is called. */
   createRun(projectId: string, prompt: string): Promise<{ runId: string }>
+  start(runId: string): Promise<void>
+  /** Replans a waiting run; the tree it writes replaces the one on screen. */
+  regenerate(runId: string): Promise<void>
   artifact(id: string): Promise<ArtifactBody>
   decideGate(runId: string, gateId: string, approved: boolean, note?: string): Promise<void>
   /** `stillPending` lets the retry loop give up as soon as the question is answered elsewhere. */
@@ -71,6 +75,8 @@ export const httpSource: Source = {
   runs: (projectId) => json<readonly Run[]>(`/projects/${projectId}/runs`),
   run: (runId) => json<RunDetail>(`/runs/${runId}`),
   createRun: (projectId, prompt) => post<{ runId: string }>("/runs", { projectId, prompt }),
+  start: (runId) => post<void>(`/runs/${runId}/start`),
+  regenerate: (runId) => post<void>(`/runs/${runId}/regenerate`),
   decideGate: (runId, gateId, approved, note) =>
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),

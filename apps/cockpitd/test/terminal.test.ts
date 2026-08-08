@@ -3,7 +3,17 @@ import { Effect } from "effect"
 import { existsSync, readFileSync } from "node:fs"
 import * as NodePath from "node:path"
 import { afterEach, expect, it } from "vitest"
-import { Api, json, makeRepo, tagged, tempDir, waitFor, withApi, writeScript } from "./harness.js"
+import {
+  Api,
+  json,
+  makeRepo,
+  startRun,
+  tagged,
+  tempDir,
+  waitFor,
+  withApi,
+  writeScript,
+} from "./harness.js"
 
 const twoMinutes = 120_000
 
@@ -45,10 +55,7 @@ const atTheGate = (client: Api, repoPath: string) =>
       client.post("/api/projects", { name: "sample", repoPath }),
       json<{ readonly id: string }>,
     )
-    const { runId } = yield* Effect.map(
-      client.post("/api/runs", { projectId: project.id, prompt: "rename the parser field" }),
-      json<{ readonly runId: string }>,
-    )
+    const { runId } = yield* startRun(client, project.id, "rename the parser field")
     yield* waitFor(runId, (found) => tagged(found, "ApprovalRequested").length > 0)
     return runId
   })

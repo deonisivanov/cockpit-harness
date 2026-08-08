@@ -1,15 +1,22 @@
 import { InsightRow, JournalEvent, ProjectRow, RunRow } from "@cockpit/core"
 import { Effect } from "effect"
 import { expect, it } from "vitest"
-import { Api, events, json, makeRepo, tagged, waitFor, withApi, writeScript } from "./harness.js"
+import {
+  Api,
+  events,
+  json,
+  makeRepo,
+  startRun,
+  tagged,
+  waitFor,
+  withApi,
+  writeScript,
+} from "./harness.js"
 
 const minutes = 60_000
 
 const register = (client: Api, repoPath: string) =>
   Effect.map(client.post("/api/projects", { name: "sample", repoPath }), json<ProjectRow>)
-
-const startRun = (client: Api, projectId: string, prompt: string) =>
-  Effect.map(client.post("/api/runs", { projectId, prompt }), json<{ readonly runId: string }>)
 
 const succeeds = { output: { summary: "done" } }
 const verifies = { output: { passed: true, findings: [] } }

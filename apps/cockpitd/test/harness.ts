@@ -143,6 +143,18 @@ export const waitFor = (
 export const tagged = (found: ReadonlyArray<JournalEvent>, tag: string) =>
   found.filter((event) => event.payload._tag === tag)
 
+/** `POST /api/runs` only plans, so a test that wants execution presses Run as a user would. */
+export const startRun = (client: Api, projectId: string, prompt: string) =>
+  Effect.gen(function* () {
+    const { runId } = yield* Effect.map(
+      client.post("/api/runs", { projectId, prompt }),
+      json<{ readonly runId: string }>,
+    )
+    yield* waitFor(runId, (found) => tagged(found, "RunAwaitingStart").length > 0)
+    yield* client.post(`/api/runs/${runId}/start`)
+    return { runId }
+  })
+
 /**
  * One server and one daemon for the whole body: a run outlives the request that starts it, so a
  * layer rebuilt per request would take its fiber down with it.

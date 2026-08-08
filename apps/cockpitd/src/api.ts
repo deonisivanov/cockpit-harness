@@ -141,7 +141,7 @@ const getRun = Effect.gen(function* () {
   })
 })
 
-const startRun = Effect.gen(function* () {
+const createRun = Effect.gen(function* () {
   const body = yield* HttpServerRequest.schemaBodyJson(CreateRun)
   const store = yield* Store
   const supervisor = yield* RunSupervisor
@@ -149,9 +149,31 @@ const startRun = Effect.gen(function* () {
   if (project === undefined) {
     return yield* problem(404, "not found", `project ${body.projectId}`)
   }
-  const runId = yield* supervisor.start({ project, prompt: body.prompt })
+  const runId = yield* supervisor.create({ project, prompt: body.prompt })
   return yield* ok({ runId }, 202)
 })
+
+/** Both verbs act on a run planning has parked, and on nothing else. */
+const waitingRun = (intent: "start" | "regenerate") =>
+  Effect.gen(function* () {
+    const store = yield* Store
+    const supervisor = yield* RunSupervisor
+    const runId = RunId.make(yield* pathParam("id"))
+    const run = yield* store.run(runId)
+    if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+    const past = intent === "start" ? "started" : "regenerated"
+    if (run.status !== "awaiting-start") {
+      return yield* problem(
+        409,
+        `run cannot be ${past}`,
+        `run ${runId} is ${run.status}; only a run waiting for a decision can be ${past}`,
+      )
+    }
+    const acted = yield* Effect.either(supervisor[intent](runId))
+    return acted._tag === "Left"
+      ? yield* problem(409, `run cannot be ${past}`, acted.left.detail)
+      : yield* ok({ runId }, 202)
+  })
 
 const runEvents = Effect.gen(function* () {
   const search = yield* HttpServerRequest.ParsedSearchParams
@@ -196,8 +218,16 @@ const endRun = (intent: "cancel" | "stop") =>
     const run = yield* store.run(runId)
     if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
     // A run stopped before its tree exists would be interrupted with nothing to re-enter —
-    // unresumable and uncancellable. Cancel is the verb for discarding a run mid-planning.
+    // unresumable and uncancellable. Cancel is the verb for discarding a run mid-planning, and
+    // for one that is waiting to be started, where there is nothing running to stop either.
     if (intent === "stop") {
+      if (run.status === "awaiting-start") {
+        return yield* problem(
+          409,
+          "run has not started",
+          `run ${runId} is waiting for a decision — cancel it instead of stopping it`,
+        )
+      }
       const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
       const tree = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
       if (tree === undefined) {
@@ -255,7 +285,7 @@ const runRetrospective = Effect.gen(function* () {
   const runId = RunId.make(yield* pathParam("id"))
   const run = yield* store.run(runId)
   if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
-  if (run.status === "created" || run.status === "running") {
+  if (run.status === "created" || run.status === "awaiting-start" || run.status === "running") {
     return yield* problem(409, "run has not finished", `run ${runId} is ${run.status}`)
   }
   const analyzed = yield* Effect.either(retrospectives.analyze(runId))
@@ -441,8 +471,10 @@ export const apiRoutes = (
     yield* router.get("/api/projects", route(respond(listProjects)))
     yield* router.post("/api/projects", route(respond(addProject)))
     yield* router.get("/api/projects/:id/runs", route(respond(listRuns)))
-    yield* router.post("/api/runs", route(respond(startRun)))
+    yield* router.post("/api/runs", route(respond(createRun)))
     yield* router.get("/api/runs/:id", route(respond(getRun)))
+    yield* router.post("/api/runs/:id/start", route(respond(waitingRun("start"))))
+    yield* router.post("/api/runs/:id/regenerate", route(respond(waitingRun("regenerate"))))
     yield* router.get("/api/runs/:id/events", route(respond(runEvents)))
     yield* router.post("/api/runs/:id/gates/:gateId", route(respond(decideGate)))
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))

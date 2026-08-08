@@ -47,6 +47,18 @@ describe("applyEvents", () => {
     expect(resumed.runStatus).toBe("running")
   })
 
+  it("holds a planned run at awaiting-start until the user starts it", () => {
+    const planned = fold(
+      ev({ _tag: "RunCreated", projectId: "p", prompt: "fix it" }),
+      ev({ _tag: "RunAwaitingStart" }),
+    )
+    expect(planned.runStatus).toBe("awaiting-start")
+    expect(planned.startedAt).toBeUndefined()
+
+    const started = applyEvents(planned, [ev({ _tag: "RunStarted" })])
+    expect(started.runStatus).toBe("running")
+  })
+
   it("holds a stopped run at interrupted, the same state a resume accepts", () => {
     const stopped = fold(ev({ _tag: "RunStarted" }), ev({ _tag: "RunStopped" }))
     expect(stopped.runStatus).toBe("interrupted")

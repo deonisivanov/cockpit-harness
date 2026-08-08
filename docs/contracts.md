@@ -208,7 +208,13 @@ Every event: `{ seq: EventSeq, ts: ISO8601, runId: RunId, blockId?: BlockId, att
 
 ```ts
 type EventPayload =
-  | RunCreated | RunStarted | RunFinished | RunCancelled | RunStopped | RunRecovered | RunResumed
+  | RunCreated | RunAwaitingStart | RunStarted | RunFinished | RunCancelled | RunStopped
+  | RunRecovered | RunResumed
+      // RunAwaitingStart: planning settled on a tree and the run waits there — `POST /runs/:id/start`
+      // executes it, `POST /runs/:id/regenerate` replaces the tree, cancel discards it. The wait is a
+      // run status rather than a parked fiber, so it outlives the daemon. Statuses run
+      // created → awaiting-start → running → succeeded | failed; cancelled closes any of the open
+      // ones, and interrupted closes a run that was executing.
   | TreeAnalyzed | TreeTransformed | TreeValidated
   | BlockStarted | BlockFinished | BlockSkipped
   | BlockSkipRequested { nodeId }            // ancillary: honoured at the next visit; consumed by its BlockSkipped
@@ -292,7 +298,7 @@ itself on boot is a worse surprise than a button.
   `ErrorRaised{signature:"session-unresumable"}`, the seeded id dropped, the same prompt run again.
 - **Re-entry refuses rather than guesses**: a completed block whose output artifact cannot be read
   back stops the resume (the blocks wired to it would otherwise run against an empty envelope), and
-  the `workflow-tree` artifact is Schema-decoded, so a truncated one reads as "nothing to re-enter".
+  the `workflow-tree` artifact is Schema-decoded, so a truncated one reads as no tree at all.
 - **Planning is not redone**: the tree and the Analyzer's derived policies come from the run's
   `workflow-tree` artifact. Block definitions come from the cartridge as it stands now, so a project
   edited since the run started resumes against what it has today. A run interrupted before it had a

@@ -31,6 +31,23 @@ test("interactive buttons render with a pointer cursor", async ({ page }) => {
 test("a live run offers Stop", async ({ page }) => {
   await page.goto("/?mock=running")
   await expect(page.getByTestId("stop-run")).toBeVisible()
+  await expect(page.getByTestId("run-workflow")).toHaveCount(0)
+})
+
+test("a planned run shows its workflow and waits for Run", async ({ page }) => {
+  await page.goto("/?mock=awaiting-start")
+
+  // The tree is on screen before anything has executed.
+  await expect(page.getByTestId("tree-node").first()).toBeVisible()
+  await expect(page.getByTestId("run-workflow")).toBeVisible()
+  await expect(page.getByTestId("regenerate-workflow")).toBeVisible()
+  await expect(page.getByTestId("cancel-run")).toBeVisible()
+  // Nothing is executing, so there is nothing to stop.
+  await expect(page.getByTestId("stop-run")).toHaveCount(0)
+
+  await page.getByTestId("run-workflow").click()
+  await expect(page.getByTestId("stop-run")).toBeVisible()
+  await expect(page.getByTestId("run-workflow")).toHaveCount(0)
 })
 
 test("tree shows block statuses, the gate and the loop indicator", async ({ page }) => {

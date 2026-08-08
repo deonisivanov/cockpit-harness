@@ -3,7 +3,17 @@ import { Effect } from "effect"
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { expect, it } from "vitest"
-import { Api, events, json, makeRepo, tagged, waitFor, withApi, writeScript } from "./harness.js"
+import {
+  Api,
+  events,
+  json,
+  makeRepo,
+  startRun,
+  tagged,
+  waitFor,
+  withApi,
+  writeScript,
+} from "./harness.js"
 
 const minutes = 60_000
 
@@ -29,10 +39,7 @@ const start = (client: Api, prompt: string) =>
       client.post("/api/projects", { name: "sample", repoPath }),
       json<ProjectRow>,
     )
-    const { runId } = yield* Effect.map(
-      client.post("/api/runs", { projectId: project.id, prompt }),
-      json<{ readonly runId: string }>,
-    )
+    const { runId } = yield* startRun(client, project.id, prompt)
     return { runId, repoPath }
   })
 
@@ -178,7 +185,7 @@ it(
     )
 
     expect(answer.status).toBe(409)
-    expect(json<{ detail: string }>(answer).detail).toContain("nothing to re-enter")
+    expect(json<{ detail: string }>(answer).detail).toContain("no workflow tree that still reads")
   },
   3 * minutes,
 )

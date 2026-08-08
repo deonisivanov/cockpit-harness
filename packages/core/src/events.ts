@@ -4,6 +4,7 @@ import { ProviderName } from "./Provider.js"
 
 export const RunStatus = Schema.Literal(
   "created",
+  "awaiting-start",
   "running",
   "succeeded",
   "failed",
@@ -54,6 +55,8 @@ export type PluginEntry = typeof PluginEntry.Type
 /** Emitted only by Journal's guarded transitions, so the log cannot narrate a state the tables never took. */
 export const LifecyclePayload = Schema.Union(
   Schema.TaggedStruct("RunCreated", { projectId: Schema.String, prompt: Schema.String }),
+  /** Planning is done and the run holds a tree; nothing executes until a human presses Run. */
+  Schema.TaggedStruct("RunAwaitingStart", {}),
   Schema.TaggedStruct("RunStarted", {}),
   Schema.TaggedStruct("RunFinished", { status: Schema.Literal("succeeded", "failed") }),
   Schema.TaggedStruct("RunCancelled", {}),

@@ -181,7 +181,7 @@ not land a second time.
 |---|---|
 | `404 {"error":"not found","detail":"run <id>"}` | No such run. |
 | `409 … "run <id> is succeeded; only an interrupted or failed run can be resumed"` | A finished run has nothing to carry on, and a **cancelled** run stays cancelled — it was stopped on purpose. |
-| `409 … "run <id> has no workflow tree that still reads, so there is nothing to re-enter; start a new run"` | The run was interrupted before planning settled on a tree, or the `workflow-tree` artifact no longer decodes. It is Schema-decoded, never cast, so a truncated file reads as "nothing to re-enter". |
+| `409 … "run <id> has no workflow tree that still reads, so there is nothing to execute; start a new run"` | The run was interrupted before planning settled on a tree, or the `workflow-tree` artifact no longer decodes. It is Schema-decoded, never cast, so a truncated file reads as no tree at all. |
 | `409 … "run <id> is running, expected one of interrupted, failed"` | A second resume arrived while the first was already under way. The status change *is* the claim on the run. |
 | `202 {"runId":"…"}` | Accepted; progress arrives through the normal event stream. |
 

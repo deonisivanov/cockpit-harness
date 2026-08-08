@@ -7,6 +7,7 @@ import {
   fmtDuration,
   parseDiff,
   resumable,
+  startable,
   terminalNote,
 } from "./presentation.js"
 import { applyEvents, emptyRunState } from "./store.js"
@@ -23,17 +24,25 @@ const ev = (payload: EventPayload, blockId?: string, attemptId?: string): Journa
 
 const rowsOf = (...events: JournalEvent[]) => buildRows(applyEvents(emptyRunState(), events))
 
+const statuses: RunStatus[] = [
+  "created",
+  "awaiting-start",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "interrupted",
+]
+
 describe("resumable", () => {
   it("shows the Resume button for a run that stopped without finishing, and for nothing else", () => {
-    const statuses: RunStatus[] = [
-      "created",
-      "running",
-      "succeeded",
-      "failed",
-      "cancelled",
-      "interrupted",
-    ]
     expect(statuses.filter(resumable)).toEqual(["failed", "interrupted"])
+  })
+})
+
+describe("startable", () => {
+  it("offers Run and Regenerate only while the run waits for a decision", () => {
+    expect(statuses.filter(startable)).toEqual(["awaiting-start"])
   })
 })
 
@@ -91,6 +100,16 @@ describe("buildRows", () => {
       (row) => row.kind === "banner",
     )
     expect(banner && "title" in banner && banner.title).toBe("run stopped — resumable")
+  })
+
+  it("renders a planned run waiting for a decision as a banner", () => {
+    const banner = rowsOf(
+      ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
+      ev({ _tag: "RunAwaitingStart" }),
+    ).find((row) => row.kind === "banner")
+    expect(banner && "title" in banner && banner.title).toBe(
+      "workflow ready — nothing runs until you press Run",
+    )
   })
 
   it("renders an approval gate as a card and carries its later decision", () => {

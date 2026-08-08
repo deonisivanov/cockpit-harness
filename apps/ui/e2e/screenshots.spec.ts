@@ -16,6 +16,11 @@ shot("running", "running", async (page) => {
   await expect(page.getByTestId("tree")).toBeVisible()
 })
 
+shot("awaiting-start", "awaiting-start", async (page) => {
+  await expect(page.getByTestId("tree-node").first()).toBeVisible()
+  await expect(page.getByTestId("run-workflow")).toBeVisible()
+})
+
 shot("failed-retry", "retry", async (page) => {
   await expect(page.getByTestId("failure-card")).toBeVisible()
   await page.getByTestId("expand-packet").click()

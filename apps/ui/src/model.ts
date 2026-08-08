@@ -6,6 +6,7 @@
 
 export type RunStatus =
   | "created"
+  | "awaiting-start"
   | "running"
   | "succeeded"
   | "failed"
@@ -40,6 +41,7 @@ export interface PluginEntry {
 
 export type EventPayload =
   | { readonly _tag: "RunCreated"; readonly projectId: string; readonly prompt: string }
+  | { readonly _tag: "RunAwaitingStart" }
   | { readonly _tag: "RunStarted" }
   | { readonly _tag: "RunFinished"; readonly status: "succeeded" | "failed" }
   | { readonly _tag: "RunCancelled" }

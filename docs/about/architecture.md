@@ -62,16 +62,19 @@ non-browser client, which no page can forge), subscribes to the bus *before* bac
 falls into the gap, pages the backfill 500 events at a time, then forwards live events with
 `seq > cursor` and sends a JSON heartbeat every 30 s.
 
-**`runs.ts`** is the `RunSupervisor`. `start` creates the worktree inside the request (so a bad
-repository is the caller's error), writes the run row, and forks the run. The forked body loads the
-cartridge, builds the registry, calls the Analyzer, applies transforms, writes the executed tree as a
-`workflow-tree` artifact, and hands it to the engine. `resume` reads that artifact back, builds a
-`ResumePlan`, flips the run to `running` (which is also the claim that prevents a second concurrent
-resume), reconciles the worktree, and re-enters the engine. `cancel` and `stop` interrupt the fiber
-if this daemon owns it, marking the intent first; a finalizer closes the run per that marker —
-`cancelled`, `interrupted` (resumable), or, with no marker, not at all, leaving the row for the boot
-scan. Any other failure becomes a journaled `ErrorRaised` plus `RunFinished{failed}`, and a finished
-run triggers the retrospective.
+**`runs.ts`** is the `RunSupervisor`. `create` creates the worktree inside the request (so a bad
+repository is the caller's error), writes the run row, and forks planning. The forked body loads the
+cartridge, builds the registry, calls the Analyzer, applies transforms, writes the tree as a
+`workflow-tree` artifact — and then stops, at `awaiting-start`. Nothing executes until a human asks:
+`start` reads that artifact back, flips the run to `running` (which is also the claim that prevents a
+second concurrent start), reconciles the worktree and enters the engine; `regenerate` runs planning
+again and writes a newer artifact, which is the one `start` will read. `resume` is `start` with the
+`ResumePlan` the journal folds, so what the run finished is replayed rather than executed. `cancel`
+and `stop` interrupt the fiber if this daemon owns it, marking the intent first; a finalizer closes
+the run per that marker — `cancelled`, `interrupted` (resumable), or, with no marker, not at all,
+leaving the row for the boot scan. A run with no fiber at all is not beyond cancelling: waiting and
+interrupted runs are closed straight through the journal. Any other failure becomes a journaled
+`ErrorRaised` plus `RunFinished{failed}`, and a finished run triggers the retrospective.
 
 ### HTTP surface
 
@@ -81,13 +84,15 @@ run triggers the retrospective.
 | `GET /api/projects` | Registered projects |
 | `POST /api/projects` | Register `{name, repoPath}`; the git *root* is stored, 400 if not a repo |
 | `GET /api/projects/:id/runs` | Runs of a project, newest first |
-| `POST /api/runs` | Start `{projectId, prompt}` → `202 {runId}` |
+| `POST /api/runs` | Plan `{projectId, prompt}` → `202 {runId}`; the run stops at `awaiting-start` |
 | `GET /api/runs/:id` | Run row + executed tree + per-policy `maxAttempts` + block rows |
+| `POST /api/runs/:id/start` | Execute the workflow it is holding; `202`, 409 unless `awaiting-start` |
+| `POST /api/runs/:id/regenerate` | Plan again, replacing the workflow; `202`, 409 unless `awaiting-start` |
 | `GET /api/runs/:id/events` | Journal page: `?from=<seq>&limit=<n>` (default 1000, max 5000) |
 | `POST /api/runs/:id/gates/:gateId` | `{approved, note?}`; 409 if no gate is awaiting a decision |
 | `POST /api/runs/:id/questions/:blockId` | `{answer}`; 409 if no question is parked |
-| `POST /api/runs/:id/cancel` | 409 if the run is not executing in this daemon process |
-| `POST /api/runs/:id/stop` | Close as `interrupted` (resumable); 409 while planning or not owned |
+| `POST /api/runs/:id/cancel` | 409 unless this daemon executes the run or the journal still holds it open |
+| `POST /api/runs/:id/stop` | Close as `interrupted` (resumable); 409 while planning, waiting, or not owned |
 | `POST /api/runs/:id/blocks/:blockId/skip` | Record a skip for the node's next visit; 409 when it would starve a later block |
 | `POST /api/runs/:id/terminal` | Open or resume the canonical session; 502 on a terminal failure |
 | `POST /api/runs/:id/retrospective` | 409 while the run is `created` or `running` |
@@ -333,11 +338,15 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
   [*] --> created: createRun
-  created --> running: startRun
+  created --> awaiting_start: awaitStart (planning settled on a tree)
+  awaiting_start --> running: startRun (POST /api/runs/:id/start)
+  created --> running: startRun (the engine, driven directly)
   running --> succeeded: finishRun (every block succeeded)
   running --> failed: finishRun (a block failed)
   created --> cancelled: cancelRun
+  awaiting_start --> cancelled: cancelRun
   running --> cancelled: cancelRun
+  interrupted --> cancelled: cancelRun
   created --> interrupted: recoverRun (boot scan)
   running --> interrupted: recoverRun (boot scan)
   interrupted --> running: resumeRun (POST /api/runs/:id/resume)
@@ -345,6 +354,11 @@ stateDiagram-v2
   succeeded --> [*]
   cancelled --> [*]
 
+  note right of awaiting_start
+    Waiting is a row, not a parked fiber,
+    so a restart leaves it untouched.
+    Regenerate replans without leaving it.
+  end note
   note right of cancelled
     Terminal on purpose: a cancelled run
     is never resumable.

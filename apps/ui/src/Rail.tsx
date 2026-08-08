@@ -5,6 +5,7 @@ import { relativeTime } from "./presentation.js"
 const DOT: Record<RunStatus, { glyph: string; className: string }> = {
   running: { glyph: "●", className: "text-vio animate-ck-pulse" },
   created: { glyph: "○", className: "text-ink-4" },
+  "awaiting-start": { glyph: "◇", className: "text-amber" },
   succeeded: { glyph: "✓", className: "text-green" },
   failed: { glyph: "✕", className: "text-red" },
   cancelled: { glyph: "✕", className: "text-slate" },

@@ -101,6 +101,9 @@ export function applyEvents(prev: RunState, incoming: readonly JournalEvent[]): 
       case "RunCreated":
         runStatus = "created"
         break
+      case "RunAwaitingStart":
+        runStatus = "awaiting-start"
+        break
       case "RunStarted":
         runStatus = "running"
         startedAt ??= e.ts

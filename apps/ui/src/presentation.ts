@@ -5,6 +5,14 @@ import type { AttemptState, RunState } from "./store.js"
 export const resumable = (status: RunStatus): boolean =>
   status === "interrupted" || status === "failed"
 
+/** A planned run executes on a human decision, and only there can it be replanned. */
+export const startable = (status: RunStatus): boolean => status === "awaiting-start"
+
+export const RUN_TITLE = "Executes this workflow; nothing has run so far"
+
+export const REGENERATE_TITLE =
+  "Plans the task again and replaces this workflow; the newest one is what Run executes"
+
 export const RESUME_TITLE =
   "Carries this run on from its last confirmed checkpoint; blocks it already finished are not executed again"
 
@@ -406,6 +414,16 @@ export function buildRows(
         break
       case "RunStopped":
         rows.push(cached(e, { kind: "banner", key, event: e, title: "run stopped — resumable" }))
+        break
+      case "RunAwaitingStart":
+        rows.push(
+          cached(e, {
+            kind: "banner",
+            key,
+            event: e,
+            title: "workflow ready — nothing runs until you press Run",
+          }),
+        )
         break
       default:
         if (!HIDDEN.has(p._tag))

@@ -1,6 +1,5 @@
 import { FileSystem } from "@effect/platform"
 import {
-  allEvents,
   Analyzer,
   ArtifactStore,
   BlockId,
@@ -15,7 +14,6 @@ import {
   nodeOf,
   PluginCatalog,
   ProjectRow,
-  recordedSkips,
   ResumePlan,
   RetrospectiveService,
   RetryPolicy,
@@ -91,10 +89,18 @@ const loopBodyIds = (root: WorkflowNode): ReadonlySet<string> => {
 export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
   RunSupervisor,
   {
-    readonly start: (input: {
+    /**
+     * Plans a run and stops there: the analyzer, the transforms and the durable tree, after which
+     * the journal holds it at `awaiting-start`. Nothing executes until a human presses Run.
+     */
+    readonly create: (input: {
       readonly project: ProjectRow
       readonly prompt: string
     }) => Effect.Effect<RunId, WorkspaceError | JournalError>
+    /** Executes the tree a waiting run has been holding, read back off its artifact. */
+    readonly start: (runId: RunId) => Effect.Effect<void, JournalError>
+    /** Re-plans a waiting run; the tree it writes is the newest, and the newest is what runs. */
+    readonly regenerate: (runId: RunId) => Effect.Effect<void, JournalError>
     /**
      * Re-enters a run the journal marked interrupted, or one that failed and the user asked to
      * carry on (plan §9). What it already completed is replayed, not executed again; the worktree
@@ -173,14 +179,15 @@ export const RunSupervisorLive = Layer.scoped(
       ]
     })
 
-    const execute = (input: {
+    /** Analyzer → transforms → the durable tree, which is all a Regenerate has to do again. */
+    const planTree = (input: {
       readonly runId: RunId
       readonly project: ProjectRow
       readonly prompt: string
-      readonly workspace: Workspace
+      readonly cwd: string
     }) =>
       Effect.gen(function* () {
-        const { project, prompt, runId, workspace } = input
+        const { cwd, project, prompt, runId } = input
         const cartridge = yield* cartridgeFor(project.repoPath)
         const registry = yield* buildRegistry(cartridge?.config)
         const rules = cartridge?.config.rules ?? {}
@@ -192,7 +199,7 @@ export const RunSupervisorLive = Layer.scoped(
           templates: registry.templates,
           policies: registry.catalog.policies,
           capabilities: yield* capabilities,
-          cwd: workspace.path,
+          cwd,
         })
 
         // The Analyzer's retry counts arrive as derived policies, so the catalog the run validates
@@ -211,17 +218,6 @@ export const RunSupervisorLive = Layer.scoped(
           kind: treeArtifactKind,
           name: "tree.json",
           content: JSON.stringify({ tree, policies: catalog.policies }),
-        })
-
-        yield* engine.run({
-          runId,
-          task: { prompt, projectId: project.id },
-          tree,
-          workspace,
-          catalog,
-          // The live Ref only survives this daemon process; the journal is what carries a
-          // request recorded before execution into the engine.
-          skips: recordedSkips(yield* allEvents(journal, runId)),
         })
       })
 
@@ -291,14 +287,16 @@ export const RunSupervisorLive = Layer.scoped(
 
     /**
      * The blocks come from the cartridge as it stands now — a project edited since the run started
-     * resumes against what it has today — while the policies travel with the tree, since the
-     * attempt ceilings behind a Loop's policy id were the Analyzer's to choose.
+     * runs against what it has today — while the policies travel with the tree, since the attempt
+     * ceilings behind a Loop's policy id were the Analyzer's to choose. One body for both entries:
+     * a first Run has nothing finished to replay, so the engine hears only about its skips.
      */
-    const reenter = (input: {
+    const enter = (input: {
       readonly run: RunRow
       readonly project: ProjectRow
       readonly planned: PlannedTree
       readonly plan: ResumePlan
+      readonly reentry: boolean
     }) =>
       Effect.gen(function* () {
         const { plan, planned, project, run } = input
@@ -311,11 +309,35 @@ export const RunSupervisorLive = Layer.scoped(
           tree: planned.tree,
           workspace,
           catalog: { blocks: registry.catalog.blocks, policies: planned.policies },
-          resume: plan,
+          ...(input.reentry ? { resume: plan } : { skips: plan.skips }),
         })
       })
 
-    /** The run may still be `created`: planning fails before the engine ever opens it. */
+    /** What an execution needs off the journal: the run, its project, and the tree it settled on. */
+    const openable = (op: string, runId: RunId) =>
+      Effect.gen(function* () {
+        const fail = (detail: string) => new JournalError({ op, detail })
+        const run = yield* store.run(runId)
+        if (run === undefined) return yield* fail(`unknown run ${runId}`)
+        const project = yield* store.project(run.projectId)
+        if (project === undefined) {
+          return yield* fail(`run ${runId} names unknown project ${run.projectId}`)
+        }
+        const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
+        const planned = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
+        if (planned === undefined) {
+          return yield* fail(
+            `run ${runId} has no workflow tree that still reads, so there is nothing to execute; start a new run`,
+          )
+        }
+        const plan = yield* buildResumePlan(runId).pipe(
+          Effect.provideService(Journal, journal),
+          Effect.provideService(Store, store),
+        )
+        return { run, project, planned, plan }
+      })
+
+    /** The engine may never have opened the run: planning and regenerating both fail before it. */
     const closeFailed = (runId: RunId) =>
       Effect.ignore(journal.startRun(runId)).pipe(
         Effect.zipRight(Effect.ignore(journal.finishRun(runId, "failed"))),
@@ -418,8 +440,11 @@ export const RunSupervisorLive = Layer.scoped(
         }),
       )
 
+    /** A body this daemon is already running for the run: planning, regenerating or executing. */
+    const inFlight = (runId: RunId) => Effect.map(Ref.get(running), HashMap.has(runId))
+
     return {
-      start: (input) =>
+      create: (input) =>
         Effect.gen(function* () {
           const runId = RunId.make(randomUUID())
           // Kept in the request: a repository that cannot produce a worktree is the caller's error
@@ -440,39 +465,79 @@ export const RunSupervisorLive = Layer.scoped(
             targetBranch: workspace.targetBranch,
           })
 
-          yield* launch(runId, execute({ ...input, runId, workspace }))
+          yield* launch(
+            runId,
+            Effect.zipRight(
+              planTree({
+                runId,
+                project: input.project,
+                prompt: input.prompt,
+                cwd: workspace.path,
+              }),
+              journal.awaitStart(runId),
+            ),
+          )
           return runId
         }),
 
-      resume: (runId) =>
+      start: (runId) =>
         Effect.gen(function* () {
-          const fail = (detail: string) => new JournalError({ op: "resume", detail })
+          const opened = yield* openable("start", runId)
+          if (yield* inFlight(runId)) {
+            return yield* new JournalError({
+              op: "start",
+              detail: `run ${runId} is still assembling its workflow — wait for the new tree`,
+            })
+          }
+          // The status change is the claim on the run: a second Run of the same one finds it
+          // running and is refused here rather than forking a fiber against the same worktree.
+          yield* journal.startRun(runId)
+          yield* launch(runId, enter({ ...opened, reentry: false }))
+        }),
+
+      regenerate: (runId) =>
+        Effect.gen(function* () {
+          const fail = (detail: string) => new JournalError({ op: "regenerate", detail })
           const run = yield* store.run(runId)
           if (run === undefined) return yield* fail(`unknown run ${runId}`)
           const project = yield* store.project(run.projectId)
           if (project === undefined) {
             return yield* fail(`run ${runId} names unknown project ${run.projectId}`)
           }
-          const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
-          const planned =
-            artifact === undefined ? undefined : yield* plannedTree(artifact.path)
-          if (planned === undefined) {
-            return yield* fail(
-              `run ${runId} has no workflow tree that still reads, so there is nothing to re-enter; start a new run`,
-            )
+          if (yield* inFlight(runId)) {
+            return yield* fail(`run ${runId} is already assembling a workflow`)
           }
-
-          const plan = yield* buildResumePlan(runId).pipe(
-            Effect.provideService(Journal, journal),
-            Effect.provideService(Store, store),
+          yield* launch(
+            runId,
+            planTree({
+              runId,
+              project,
+              prompt: run.prompt,
+              cwd: run.worktreePath ?? project.repoPath,
+            }),
           )
+        }),
+
+      resume: (runId) =>
+        Effect.gen(function* () {
+          const opened = yield* openable("resume", runId)
           // The status change is the claim on the run: a second resume of the same one finds it
           // running and is refused here rather than forking a fiber against the same worktree.
           yield* journal.resumeRun(runId)
-          yield* launch(runId, reenter({ run, project, planned, plan }))
+          yield* launch(runId, enter({ ...opened, reentry: true }))
         }),
 
-      cancel: (runId) => interrupt(runId, "cancel"),
+      cancel: (runId) =>
+        Effect.gen(function* () {
+          if (yield* interrupt(runId, "cancel")) return true
+          // Nothing to interrupt: a run waiting for a decision never had a fiber, and an
+          // interrupted one lost its with the daemon that ran it. Both are still open, so the
+          // journal closes them directly rather than reporting a cancel that did nothing.
+          const status = (yield* store.run(runId))?.status
+          if (status !== "awaiting-start" && status !== "interrupted") return false
+          yield* journal.cancelRun(runId)
+          return true
+        }).pipe(Effect.orElseSucceed(() => false)),
 
       stop: (runId) => interrupt(runId, "stop"),
 
