@@ -140,8 +140,11 @@ export const HerdrClientLive = Layer.effect(
         }
         const tabId = str(record(result?.tab)?.tab_id) ?? "unknown"
         // Success is herdr's own criterion: the agent was detected in that pane and is ready for
-        // input. Note the canonical-executable caveat: `--kind` decides what runs, so a
-        // COCKPIT_{CLAUDE,CODEX}_BIN override only reaches the Ghostty path.
+        // input. The canonical-executable caveat, traded knowingly: `--kind` decides what runs,
+        // so a COCKPIT_{CLAUDE,CODEX}_BIN override only reaches the Ghostty path — and a herdr
+        // environment that cannot resolve the bare binary fails here without falling through to
+        // Ghostty, since the tab is already on screen.
+        // Agent names must match ^[a-z][a-z0-9_-]{0,31}$ and real pane ids carry uppercase.
         yield* exec(
           "agent",
           input.cwd,
@@ -149,7 +152,7 @@ export const HerdrClientLive = Layer.effect(
             herdr,
             "agent",
             "start",
-            `cockpit-${paneId.replaceAll(":", "-")}`,
+            `cockpit-${paneId.replaceAll(":", "-").toLowerCase()}`,
             "--kind",
             input.agentKind,
             "--pane",

@@ -34,12 +34,17 @@ if (argv[0] === "tab" && argv[1] === "create") {
     result: {
       type: "tab_created",
       tab: { tab_id: "w1:t9", workspace_id: "w1" },
-      root_pane: { pane_id: "w1:t9:p1" },
+      root_pane: { pane_id: process.env.COCKPIT_FAKE_HERDR_PANE ?? "w1:t9:p1" },
     },
   })
 }
 
 if (argv[0] === "agent" && argv[1] === "start") {
+  // The real CLI enforces this; without it a bad generated name is invisible to the suite.
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(argv[2] ?? "")) {
+    process.stderr.write(`invalid_agent_name: ${argv[2]}\n`)
+    process.exit(1)
+  }
   if (process.env.COCKPIT_FAKE_HERDR_START_FAIL === "1") {
     process.stderr.write("no agent was detected in pane w1:t9:p1 before the timeout\n")
     process.exit(1)

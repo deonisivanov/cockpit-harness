@@ -35,6 +35,7 @@ const fakeEnv = [
   "COCKPIT_FAKE_HERDR_LOG",
   "COCKPIT_FAKE_HERDR_DOWN",
   "COCKPIT_FAKE_HERDR_START_FAIL",
+  "COCKPIT_FAKE_HERDR_PANE",
   "COCKPIT_FAKE_HERDR_PROTOCOL",
   "COCKPIT_FAKE_OPEN_LOG",
   "COCKPIT_FAKE_OPEN_FAIL",
@@ -576,6 +577,26 @@ it("resumes with the provider that opened the session, not the one the run moved
     "--resume",
     opened.first.sessionId,
   ])
+})
+
+it("lowercases the agent name minted from an uppercase pane id", async () => {
+  const world = await scenario()
+  // Real pane ids carry uppercase; agent names must not (^[a-z][a-z0-9_-]{0,31}$).
+  process.env.COCKPIT_FAKE_HERDR_PANE = "wA:t9:pK"
+
+  const opened = await runContinuity(
+    world.home,
+    Effect.gen(function* () {
+      yield* seedRun(world.repoPath)
+      return yield* (yield* ContinuationService).open(runId)
+    }),
+    world.settings,
+  )
+
+  expect(opened.mode).toBe("herdr")
+  const start = world.herdr()[2]
+  expect(start.slice(0, 3)).toEqual(["agent", "start", "cockpit-wa-t9-pk"])
+  expect(start[start.indexOf("--pane") + 1]).toBe("wA:t9:pK")
 })
 
 it("does not open a second terminal when the tab exists but no agent came up in it", async () => {
