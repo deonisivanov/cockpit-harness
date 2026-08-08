@@ -211,7 +211,7 @@ type EventPayload =
   | RunCreated | RunStarted | RunFinished | RunCancelled | RunStopped | RunRecovered | RunResumed
   | TreeAnalyzed | TreeTransformed | TreeValidated
   | BlockStarted | BlockFinished | BlockSkipped
-  | BlockSkipRequested { nodeId; reason? }   // ancillary: honoured and consumed at the next visit
+  | BlockSkipRequested { nodeId }            // ancillary: honoured at the next visit; consumed by its BlockSkipped
   | BlockReplayed { defId; reason }          // re-entry read this block's result from the journal
   | AttemptStarted | AttemptFinished | AttemptInterrupted
   | SessionStarted | SessionResumed          // provider session lifecycles

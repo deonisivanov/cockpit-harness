@@ -86,6 +86,13 @@ describe("describe", () => {
 })
 
 describe("buildRows", () => {
+  it("renders a stopped run as a resumable banner", () => {
+    const banner = rowsOf(ev({ _tag: "RunStarted" }), ev({ _tag: "RunStopped" })).find(
+      (row) => row.kind === "banner",
+    )
+    expect(banner && "title" in banner && banner.title).toBe("run stopped — resumable")
+  })
+
   it("renders an approval gate as a card and carries its later decision", () => {
     const rows = rowsOf(
       ev({ _tag: "ApprovalRequested", gateId: "plan-approval", payloadRef: "art_plan" }, "plan-approval"),
@@ -261,13 +268,6 @@ describe("fmtDuration", () => {
     expect(fmtDuration(18_600)).toBe("18.6s")
     expect(fmtDuration(192_000)).toBe("3m12")
   })
-})
-
-it("renders a stopped run as a resumable banner", () => {
-  const banner = rowsOf(ev({ _tag: "RunStarted" }), ev({ _tag: "RunStopped" })).find(
-    (row) => row.kind === "banner",
-  )
-  expect(banner && "title" in banner && banner.title).toBe("run stopped — resumable")
 })
 
 describe("terminalNote", () => {

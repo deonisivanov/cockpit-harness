@@ -1078,6 +1078,15 @@ export const WorkflowEngineLive = Layer.effect(
                 kind: def.kind,
                 reason: "skipped by user request",
               })
+              // A skipped loop iteration must starve its dependents, not feed them the previous
+              // iteration's output.
+              yield* Ref.update(state, (value) => {
+                const outputs = { ...value.outputs }
+                const outputRefs = { ...value.outputRefs }
+                delete outputs[node.id]
+                delete outputRefs[node.id]
+                return { ...value, outputs, outputRefs }
+              })
               return { verdict: "success" } satisfies AttemptOutcome
             }
 

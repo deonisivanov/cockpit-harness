@@ -28,7 +28,7 @@ test("interactive buttons render with a pointer cursor", async ({ page }) => {
   await expect(page.getByTestId("cancel-run")).toHaveCSS("cursor", "pointer")
 })
 
-test("a live run offers Stop beside Cancel", async ({ page }) => {
+test("a live run offers Stop", async ({ page }) => {
   await page.goto("/?mock=running")
   await expect(page.getByTestId("stop-run")).toBeVisible()
 })

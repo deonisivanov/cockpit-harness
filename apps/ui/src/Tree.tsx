@@ -232,7 +232,7 @@ function TreeNode({
           data-testid="skip-block"
           title="Skip this block's next visit; refused if a later block requires its output"
           onClick={() => onSkip(row.id)}
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm border border-white/10 bg-panel px-1.5 font-mono text-[9.5px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 hover:border-amber/40 hover:text-amber"
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm border border-white/10 bg-panel px-1.5 font-mono text-[9.5px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:border-amber/40 hover:text-amber"
         >
           skip
         </button>

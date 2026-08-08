@@ -234,7 +234,7 @@ it("skips a block and cancels the run without touching attempts", async () => {
   expect(events[2].payload).toMatchObject({ reason: "toggled off by the analyzer" })
 })
 
-it("recordedSkips pends a request until the node's next visit, across instance suffixes", async () => {
+it("recordedSkips pends a request until a BlockSkipped honours it, and nothing else", async () => {
   const trail = await withKernel(
     Effect.gen(function* () {
       const journal = yield* Journal
@@ -247,33 +247,31 @@ it("recordedSkips pends a request until the node's next visit, across instance s
       const pending = recordedSkips(yield* readEvents(runId))
       // The same fold feeds re-entry, so a fresh start and a resume agree on what is pending.
       const planned = [...(yield* buildResumePlan(runId)).skips]
-      yield* journal.skipBlock({
+      // A visit that runs the node does not consume the request; only its BlockSkipped does —
+      // the one event the live consumption also writes, so the two views cannot diverge.
+      yield* journal.startBlock({
         runId,
         blockId: BlockId.make("implement"),
+        defId: "agent-task",
+        kind: "agent",
+      })
+      const survivesAVisit = recordedSkips(yield* readEvents(runId))
+      yield* journal.skipBlock({
+        runId,
+        blockId: BlockId.make("implement#2"),
         defId: "agent-task",
         kind: "agent",
         reason: "skipped by user request",
       })
       const consumed = recordedSkips(yield* readEvents(runId))
-      yield* journal.append({
-        runId,
-        payload: { _tag: "BlockSkipRequested", nodeId: "implement" },
-      })
-      yield* journal.startBlock({
-        runId,
-        blockId: BlockId.make("implement#2"),
-        defId: "agent-task",
-        kind: "agent",
-      })
-      const consumedBySuffix = recordedSkips(yield* readEvents(runId))
-      return { pending, planned, consumed, consumedBySuffix }
+      return { pending, planned, survivesAVisit, consumed }
     }),
   )
 
   expect([...trail.pending]).toEqual(["implement"])
   expect(trail.planned).toEqual(["implement"])
+  expect([...trail.survivesAVisit]).toEqual(["implement"])
   expect(trail.consumed.size).toBe(0)
-  expect(trail.consumedBySuffix.size).toBe(0)
 })
 
 it("closes a stopped run as interrupted, and resume re-opens it", async () => {

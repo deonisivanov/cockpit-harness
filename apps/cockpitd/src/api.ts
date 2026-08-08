@@ -198,7 +198,8 @@ const endRun = (intent: "cancel" | "stop") =>
     // A run stopped before its tree exists would be interrupted with nothing to re-enter —
     // unresumable and uncancellable. Cancel is the verb for discarding a run mid-planning.
     if (intent === "stop") {
-      const tree = yield* store.latestArtifact(runId, treeArtifactKind)
+      const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
+      const tree = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
       if (tree === undefined) {
         return yield* problem(
           409,

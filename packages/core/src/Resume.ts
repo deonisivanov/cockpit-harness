@@ -43,26 +43,23 @@ export interface ResumePlan {
 const instanced = /^(.*)#(\d+)$/
 
 /** `implement#2` is the second execution of the node `implement`; the engine appends the suffix. */
-const nodeOf = (blockId: string) => instanced.exec(blockId)?.[1] ?? blockId
+export const nodeOf = (blockId: string) => instanced.exec(blockId)?.[1] ?? blockId
 
 const terminal = new Set<BlockStatus>(["succeeded", "failed", "skipped"])
 
 /**
- * Node ids with an outstanding skip request: requested after the node's last visit. One fold for
- * every reader — a fresh start and a re-entry must agree on which requests are still pending, or
- * a skip is honoured on one path and silently ignored on the other.
+ * Node ids with an outstanding skip request. A request is consumed only by the BlockSkipped that
+ * honours it — not by a visit that ran or replayed the node — because that is the one event the
+ * live path also produces when it consumes its Ref entry. Any broader rule lets a fold taken
+ * mid-race disagree with the Ref, and then a skip is honoured on a fresh start but not on a
+ * resume, or the reverse, silently.
  */
 export const recordedSkips = (events: ReadonlyArray<JournalEvent>): ReadonlySet<string> => {
   const pending = new Set<string>()
   for (const event of events) {
     const payload = event.payload
     if (payload._tag === "BlockSkipRequested") pending.add(payload.nodeId)
-    else if (
-      (payload._tag === "BlockStarted" ||
-        payload._tag === "BlockSkipped" ||
-        payload._tag === "BlockReplayed") &&
-      event.blockId !== undefined
-    ) {
+    else if (payload._tag === "BlockSkipped" && event.blockId !== undefined) {
       pending.delete(nodeOf(event.blockId))
     }
   }

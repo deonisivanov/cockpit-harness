@@ -127,10 +127,7 @@ export const AncillaryPayload = Schema.Union(
   }),
   Schema.TaggedStruct("TreeTransformed", { name: Schema.String, diffRef: ArtifactId }),
   /** A user asked to skip a node's next visit; the skip itself is the BlockSkipped that follows. */
-  Schema.TaggedStruct("BlockSkipRequested", {
-    nodeId: Schema.String,
-    reason: Schema.optional(Schema.String),
-  }),
+  Schema.TaggedStruct("BlockSkipRequested", { nodeId: Schema.String }),
   Schema.TaggedStruct("PluginResolved", {
     provider: Schema.Struct({ name: ProviderName, version: Schema.optional(Schema.String) }),
     plugin: Schema.optional(

@@ -12,6 +12,7 @@ import {
   clip,
   Journal,
   JournalError,
+  nodeOf,
   PluginCatalog,
   ProjectRow,
   recordedSkips,
@@ -57,6 +58,35 @@ export const plannedTree = (path: string) =>
   )
 
 const causeChars = 4_000
+
+/** Block ids that sit inside a Loop body — the only nodes a finished instance may run again for. */
+const loopBodyIds = (root: WorkflowNode): ReadonlySet<string> => {
+  const ids = new Set<string>()
+  const collect = (node: WorkflowNode, inLoop: boolean): void => {
+    switch (node._tag) {
+      case "Block":
+        if (inLoop) ids.add(node.id)
+        return
+      case "Sequence":
+        node.children.forEach((child) => collect(child, inLoop))
+        return
+      case "Parallel":
+        node.branches.forEach((branch) => collect(branch.node, inLoop))
+        return
+      case "Condition":
+        collect(node.onTrue, inLoop)
+        if (node.onFalse !== undefined) collect(node.onFalse, inLoop)
+        return
+      case "Loop":
+        collect(node.body, true)
+        return
+      case "Gate":
+        return
+    }
+  }
+  collect(root, false)
+  return ids
+}
 
 export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
   RunSupervisor,
@@ -189,7 +219,8 @@ export const RunSupervisorLive = Layer.scoped(
           tree,
           workspace,
           catalog,
-          // Requests recorded while the run was still being planned survive a daemon restart.
+          // The live Ref only survives this daemon process; the journal is what carries a
+          // request recorded before execution into the engine.
           skips: recordedSkips(yield* allEvents(journal, runId)),
         })
       })
@@ -319,9 +350,8 @@ export const RunSupervisorLive = Layer.scoped(
         }),
       )
 
-    // Marked before the interrupt, or the close finalizer races an empty map; unmarked right
-    // after it, or a stop racing the run's natural completion leaves a stale marker behind the
-    // ensuring cleanup that already ran.
+    // Marked before the interrupt so the close finalizer sees the intent; removed after it so a
+    // natural completion that raced the mark leaves nothing stale behind.
     const interrupt = (runId: RunId, intent: "stop" | "cancel") =>
       Effect.gen(function* () {
         const fiber = HashMap.get(yield* Ref.get(running), runId)
@@ -454,8 +484,9 @@ export const RunSupervisorLive = Layer.scoped(
           if (run.status === "succeeded" || run.status === "cancelled") {
             return refused(`run ${runId} is ${run.status}; there is nothing left to skip`)
           }
-          const active = (yield* store.blocks(runId)).find(
-            (block) => block.id.replace(/#\d+$/, "") === nodeId && block.status === "running",
+          const blocks = yield* store.blocks(runId)
+          const active = blocks.find(
+            (block) => nodeOf(block.id) === nodeId && block.status === "running",
           )
           if (active !== undefined) {
             return refused(`${nodeId} is running now — Stop the run, skip the block, then Resume`)
@@ -468,18 +499,33 @@ export const RunSupervisorLive = Layer.scoped(
           if (!blocksIn(planned.tree.root).some((block) => block.id === nodeId)) {
             return refused(`${nodeId} names no block in this run's workflow`)
           }
+          // A terminal node outside any loop has no next visit; accepting would 202 into nothing.
+          const newest = blocks.filter((block) => nodeOf(block.id) === nodeId).at(-1)
+          if (
+            newest !== undefined &&
+            newest.status !== "running" &&
+            newest.status !== "interrupted" &&
+            !loopBodyIds(planned.tree.root).has(nodeId)
+          ) {
+            return refused(`${nodeId} already finished as ${newest.status} and will not run again`)
+          }
           const project = yield* store.project(run.projectId)
-          const cartridge =
-            project === undefined
-              ? undefined
-              : yield* cartridgeFor(project.repoPath).pipe(Effect.orElseSucceed(() => undefined))
-          const registry = yield* buildRegistry(cartridge?.config).pipe(
-            Effect.orElseSucceed(() => undefined),
-          )
-          if (registry === undefined) return refused("the project's cartridge does not load")
+          if (project === undefined) {
+            return refused(`run ${runId} names unknown project ${run.projectId}`)
+          }
+          // A cartridge that will not load must refuse, not downgrade the check to core blocks —
+          // against those, every cartridge block is unknown and the contract diff goes blind.
+          const cartridge = yield* cartridgeFor(project.repoPath).pipe(Effect.either)
+          if (cartridge._tag === "Left") {
+            return refused(`the project's cartridge does not load: ${cartridge.left.detail}`)
+          }
+          const registry = yield* buildRegistry(cartridge.right?.config).pipe(Effect.either)
+          if (registry._tag === "Left") {
+            return refused(`the project's cartridge does not load: ${registry.left.message}`)
+          }
           const broken = skipBreaksContract(
             planned.tree,
-            { blocks: registry.catalog.blocks, policies: planned.policies },
+            { blocks: registry.right.catalog.blocks, policies: planned.policies },
             BlockId.make(nodeId),
           )
           const first = broken[0]
@@ -488,8 +534,10 @@ export const RunSupervisorLive = Layer.scoped(
               `skipping ${nodeId} would break ${first.path.at(-1) ?? "the workflow"}: ${first.message}`,
             )
           }
-          yield* journal.append({ runId, payload: { _tag: "BlockSkipRequested", nodeId } })
+          // Ref first: if the node starts between the running-check and here, both the Ref and
+          // the journal fold read the request as still pending for the next visit.
           yield* engine.requestSkip(runId, BlockId.make(nodeId))
+          yield* journal.append({ runId, payload: { _tag: "BlockSkipRequested", nodeId } })
           return { _tag: "accepted" } as const
         }),
     }
