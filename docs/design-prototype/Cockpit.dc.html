@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#08080b;color:#d6d6de;font-family:'Poppins',system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+*{box-sizing:border-box}
+a{color:#8b8bf5;text-decoration:none}
+a:hover{color:#a7a7ff}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.09);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+input,textarea,button,select{font-family:inherit}
+@keyframes ck-pulse{0%,100%{opacity:.35;transform:scale(.82)}50%{opacity:1;transform:scale(1.12)}}
+@keyframes ck-glow{0%,100%{box-shadow:0 0 0 0 rgba(201,154,74,0)}50%{box-shadow:0 0 0 3px rgba(201,154,74,.13)}}
+@keyframes ck-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+@keyframes ck-blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes ck-spin{to{transform:rotate(360deg)}}
+@keyframes ck-sweep{0%{opacity:.25}50%{opacity:.6}100%{opacity:.25}}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100vh;background:#08080b">
+  <div style="flex:1;display:flex;min-height:0">
+
+    <aside style="{{ railStyle }}">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px">
+        <sc-if value="{{ railExpanded }}" hint-placeholder-val="{{ true }}">
+          <div style="font:600 14.5px/1 'Poppins';color:#e4e4ec;letter-spacing:-.01em">Cockpit</div>
+        </sc-if>
+        <div onClick="{{ toggleRail }}" title="toggle rail" style="cursor:pointer;color:#4a4a54;font:500 11px/1 'JetBrains Mono';padding:4px 6px;border-radius:4px;margin:0 auto 0 0" style-hover="color:#9a9aa6;background:rgba(255,255,255,.04)">{{ railToggleGlyph }}</div>
+      </div>
+
+      <sc-if value="{{ railCompact }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:3px;padding:4px 8px">
+          <sc-for list="{{ compactTasks }}" as="c" hint-placeholder-count="6">
+            <div title="{{ c.title }}" style="{{ c.style }}">{{ c.dot }}</div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ railExpanded }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:0 12px 10px;display:flex;gap:6px;align-items:center">
+        <div style="flex:1;display:flex;align-items:center;justify-content:space-between;border:1px solid rgba(255,255,255,.07);border-radius:5px;background:#101014;padding:7px 9px;cursor:pointer" style-hover="border-color:rgba(255,255,255,.14)">
+          <span style="font:500 12.5px/1 'Poppins';color:#c4c4ce">ai-interview-assistant</span>
+          <span style="color:#4a4a54;font:400 9px/1 'JetBrains Mono'">▼</span>
+        </div>
+        <div title="refresh" style="width:26px;height:28px;display:flex;align-items:center;justify-content:center;color:#4a4a54;cursor:pointer;border-radius:4px" style-hover="color:#9a9aa6;background:rgba(255,255,255,.04)">↻</div>
+      </div>
+
+      <div style="display:flex;gap:12px;padding:2px 14px 10px;font:500 10.5px/1 'Poppins';color:#4a4a54">
+        <span style="color:#7b93f2">● 1 running</span>
+        <span style="color:#c99a4a">◐ 1 waiting</span>
+        <span style="color:#cf6060">✕ 1 failed</span>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:0 8px">
+        <sc-for list="{{ tasks }}" as="task" hint-placeholder-count="6">
+          <div onClick="{{ task.onClick }}" style="{{ task.style }}">
+            <span style="{{ task.dotStyle }}">{{ task.dot }}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.title }}</span>
+            <sc-if value="{{ task.badge }}" hint-placeholder-val="{{ false }}">
+              <span style="{{ task.badgeStyle }}">{{ task.badge }}</span>
+            </sc-if>
+            <span style="font:400 10px/1 'JetBrains Mono';color:#42424c;flex:none">{{ task.time }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:10px 12px;border-top:1px solid rgba(255,255,255,.05)">
+        <div onClick="{{ goIdle }}" style="border:1px dashed rgba(255,255,255,.11);border-radius:5px;padding:9px 10px;text-align:center;font:500 12px/1 'Poppins';color:#7a7a86;cursor:pointer" style-hover="border-color:rgba(139,139,245,.4);color:#a7a7ff">+ new task</div>
+      </div>
+
+      <div style="padding:0 14px 12px">
+        <div style="font:500 9px/1 'JetBrains Mono';color:#3f3f49;letter-spacing:.14em;padding:8px 0 7px">ACTIVITY</div>
+        <sc-for list="{{ activity }}" as="a" hint-placeholder-count="3">
+          <div style="display:flex;gap:7px;align-items:baseline;padding:3px 0;font:400 11px/1.45 'Poppins';color:#5c5c67">
+            <span style="{{ a.dotStyle }}">●</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ a.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+    </aside>
+
+    <main style="flex:1;display:flex;flex-direction:column;min-width:0">
+
+      <sc-if value="{{ hasTask }}" hint-placeholder-val="{{ true }}">
+        <div style="margin:12px 12px 0;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:#0d0d11;padding:14px 16px 13px;flex:none">
+          <div style="display:flex;align-items:flex-start;gap:14px">
+            <div style="{{ head.chipStyle }}">{{ head.chip }}</div>
+            <div style="flex:1;min-width:0;font:700 16px/1.4 'Poppins';color:#e4e4ec;letter-spacing:-.005em;text-wrap:pretty">{{ head.title }}</div>
+            <a href="#" style="flex:none;font:400 11px/1.5 'JetBrains Mono';color:#5f5f6c;max-width:200px;text-align:right" style-hover="color:#8b8bf5">{{ head.source }} ↗</a>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;margin-top:11px;flex-wrap:wrap">
+            <span style="{{ head.statusStyle }}">{{ head.status }}</span>
+            <span style="border:1px solid rgba(201,154,74,.22);background:rgba(201,154,74,.07);color:#c99a4a;border-radius:4px;padding:5px 9px;font:500 11.5px/1 'Poppins';white-space:nowrap">{{ head.cost }}</span>
+            <span style="font:400 11.5px/1 'Poppins';color:#5c5c67;white-space:nowrap">{{ head.elapsed }}</span>
+            <sc-if value="{{ head.note }}" hint-placeholder-val="{{ false }}">
+              <span style="font:400 11.5px/1 'Poppins';color:#4a4a54">· {{ head.note }}</span>
+            </sc-if>
+            <div style="flex:1"></div>
+            <div style="display:flex;gap:7px;align-items:center">
+              <div style="border:1px solid rgba(255,255,255,.08);border-radius:5px;padding:6px 11px;font:500 12px/1.3 'Poppins';color:#8f8f9c;cursor:pointer;white-space:nowrap" style-hover="border-color:rgba(255,255,255,.18);color:#d6d6de">Regenerate workflow</div>
+              <sc-if value="{{ head.showCancel }}" hint-placeholder-val="{{ false }}">
+                <div style="border:1px solid rgba(207,96,96,.22);border-radius:5px;padding:6px 11px;font:500 12px/1.3 'Poppins';color:#b56a6a;cursor:pointer;white-space:nowrap" style-hover="border-color:rgba(207,96,96,.45);color:#cf6060">Cancel</div>
+              </sc-if>
+              <sc-if value="{{ head.showRetry }}" hint-placeholder-val="{{ false }}">
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:5px;padding:6px 11px;font:500 12px/1.3 'Poppins';color:#8f8f9c;cursor:pointer;white-space:nowrap" style-hover="border-color:rgba(255,255,255,.18);color:#d6d6de">Retry block</div>
+              </sc-if>
+              <div style="{{ head.primaryStyle }}">Open session in terminal ↗</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="flex:1;display:flex;min-height:0;gap:12px;padding:12px;position:relative;overflow:hidden">
+
+        <section style="{{ streamStyle }}">
+
+          <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ false }}">
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 12%;gap:0">
+              <div style="font:500 11px/1 'JetBrains Mono';color:#4a4a54;letter-spacing:.12em;margin-bottom:14px">NEW TASK · AI-INTERVIEW-ASSISTANT</div>
+              <div style="border:1px solid rgba(255,255,255,.09);border-radius:8px;background:#0e0e12;padding:14px 16px">
+                <div style="font:400 13px/1.6 'JetBrains Mono';color:#6a6a76;min-height:76px">Describe the task, or paste an issue URL…<span style="display:inline-block;width:7px;height:15px;background:#8b8bf5;vertical-align:-2px;margin-left:1px;animation:ck-blink 1.05s step-end infinite"></span></div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.05)">
+                  <span style="border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:5px 8px;font:400 10.5px/1 'JetBrains Mono';color:#8f8f9c">claude-code</span>
+                  <span style="border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:5px 8px;font:400 10.5px/1 'JetBrains Mono';color:#8f8f9c">analyzer: auto</span>
+                  <span style="border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:5px 8px;font:400 10.5px/1 'JetBrains Mono';color:#8f8f9c">+ attach</span>
+                  <div style="flex:1"></div>
+                  <div onClick="{{ goAnalyzing }}" style="border:1px solid rgba(139,139,245,.35);background:rgba(139,139,245,.11);border-radius:5px;padding:6px 14px;font:500 11.5px/1.3 'JetBrains Mono';color:#a7a7ff;cursor:pointer" style-hover="background:rgba(139,139,245,.2);border-color:rgba(139,139,245,.55)">Analyze &amp; run ⏎</div>
+                </div>
+              </div>
+              <div style="font:500 9.5px/1 'JetBrains Mono';color:#3f3f49;letter-spacing:.14em;margin:26px 0 8px">RECENT</div>
+              <sc-for list="{{ recent }}" as="r" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.035);font:400 12px/1.4 'JetBrains Mono';color:#8f8f9c;cursor:pointer" style-hover="color:#d6d6de">
+                  <span style="{{ r.dotStyle }}">{{ r.dot }}</span>
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.title }}</span>
+                  <span style="color:#42424c;font-size:10.5px">{{ r.meta }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ hasStream }}" hint-placeholder-val="{{ true }}">
+            <div style="flex:none;display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.055);background:#0d0d11;overflow:hidden;flex-wrap:nowrap">
+              <span style="{{ runDotStyle }}"></span>
+              <span style="font:500 12px/1 'JetBrains Mono';color:#c4c4ce;flex:none;white-space:nowrap">{{ streamLabel }}</span>
+              <sc-if value="{{ streamSub }}" hint-placeholder-val="{{ false }}">
+                <span style="font:400 11px/1 'JetBrains Mono';color:#4a4a54;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">· {{ streamSub }}</span>
+              </sc-if>
+              <sc-if value="{{ filterLabel }}" hint-placeholder-val="{{ false }}">
+                <span onClick="{{ clearFilter }}" style="display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(139,139,245,.3);background:rgba(139,139,245,.09);border-radius:4px;padding:3px 8px;font:400 10.5px/1.3 'JetBrains Mono';color:#a7a7ff;cursor:pointer">filtered: {{ filterLabel }} ✕</span>
+              </sc-if>
+              <div style="flex:1"></div>
+              <span onClick="{{ toggleWrap }}" style="{{ wrapStyle }}">wrap</span>
+              <span onClick="{{ toggleFollow }}" style="{{ followStyle }}">follow</span>
+              <sc-if value="{{ showTreeToggle }}" hint-placeholder-val="{{ false }}">
+                <span onClick="{{ toggleTree }}" style="cursor:pointer;flex:none;border:1px solid rgba(255,255,255,.12);border-radius:4px;padding:3px 8px;font:400 10px/1.4 'JetBrains Mono';color:#9a9aa6;white-space:nowrap" style-hover="color:#d6d6de;border-color:rgba(139,139,245,.4)">{{ treeToggleLabel }}</span>
+              </sc-if>
+            </div>
+
+            <div style="flex:1;overflow-y:auto;padding:6px 0 40px">
+              <sc-for list="{{ rows }}" as="row" hint-placeholder-count="8">
+                <div style="{{ row.wrapStyle }}">
+
+                  <sc-if value="{{ row.isAttempt }}" hint-placeholder-val="{{ false }}">
+                    <div style="{{ row.attemptStyle }}">
+                      <span style="font:600 11.5px/1 'JetBrains Mono';color:#c4c4ce;letter-spacing:.02em;flex:none;white-space:nowrap">{{ row.title }}</span>
+                      <span style="font:400 11px/1.4 'JetBrains Mono';color:#5c5c67;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.meta }}</span>
+                      <div style="flex:1;height:1px;background:rgba(255,255,255,.06);min-width:12px"></div>
+                      <span style="font:400 10.5px/1 'JetBrains Mono';color:#42424c;flex:none;white-space:nowrap">{{ row.right }}</span>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isBanner }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:8px 14px;border:1px solid rgba(109,142,240,.25);background:rgba(109,142,240,.06);border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px">
+                      <span style="color:#6d8ef0;font:400 12px/1 'JetBrains Mono'">↻</span>
+                      <span style="font:400 11.5px/1.5 'JetBrains Mono';color:#9fb2f5">{{ row.title }}</span>
+                      <div style="flex:1"></div>
+                      <span style="font:400 10.5px/1 'JetBrains Mono';color:#5c6a9a">{{ row.meta }}</span>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isFailure }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:6px 14px 10px;border:1px solid rgba(207,96,96,.22);background:rgba(207,96,96,.045);border-radius:6px;padding:11px 13px">
+                      <div style="font:500 11px/1 'JetBrains Mono';color:#cf6060;letter-spacing:.06em;margin-bottom:8px">ATTEMPT FAILED</div>
+                      <div style="font:400 12px/1.6 'JetBrains Mono';color:#b0b0bc">{{ row.title }}</div>
+                      <div style="display:flex;gap:16px;margin-top:9px;flex-wrap:wrap">
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#5c5c67">{{ row.meta }}</span>
+                        <a href="#" onClick="{{ row.onToggle }}" style="font:400 10.5px/1 'JetBrains Mono'">feedback passed to next attempt →</a>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isEvent }}" hint-placeholder-val="{{ true }}">
+                    <div onClick="{{ row.onToggle }}" style="{{ row.rowStyle }}" style-hover="background:rgba(255,255,255,.028)">
+                      <span style="{{ row.dotStyle }}"></span>
+                      <span style="{{ row.tagStyle }}">{{ row.tag }}</span>
+                      <span style="{{ row.sumStyle }}">{{ row.summary }}</span>
+                      <sc-if value="{{ row.metaText }}" hint-placeholder-val="{{ false }}">
+                        <span style="flex:none;font:400 10.5px/1.5 'JetBrains Mono';color:#42424c">{{ row.metaText }}</span>
+                      </sc-if>
+                      <sc-if value="{{ row.live }}" hint-placeholder-val="{{ false }}">
+                        <span style="display:inline-block;width:6px;height:12px;background:#8b8bf5;flex:none;animation:ck-blink 1.05s step-end infinite"></span>
+                      </sc-if>
+                      <span style="{{ row.tsStyle }}">{{ row.ts }}</span>
+                      <span style="{{ row.durStyle }}">{{ row.dur }}</span>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.open }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:2px 14px 12px 46px;display:flex;flex-direction:column;gap:12px">
+                      <sc-for list="{{ row.sections }}" as="sec" hint-placeholder-count="1">
+                        <div>
+                          <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:6px">
+                            <span style="font:500 9.5px/1 'JetBrains Mono';color:#55555f;letter-spacing:.13em">{{ sec.title }}</span>
+                            <sc-if value="{{ sec.note }}" hint-placeholder-val="{{ false }}">
+                              <span style="font:400 10px/1 'JetBrains Mono';color:#3f3f49">{{ sec.note }}</span>
+                            </sc-if>
+                          </div>
+                          <sc-if value="{{ sec.isKV }}" hint-placeholder-val="{{ false }}">
+                            <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 20px;font:400 11.5px/1.6 'JetBrains Mono'">
+                              <sc-for list="{{ sec.pairs }}" as="p" hint-placeholder-count="3">
+                                <span style="color:#55555f">{{ p.k }}</span>
+                                <span style="{{ p.style }}">{{ p.v }}</span>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ sec.isLines }}" hint-placeholder-val="{{ true }}">
+                            <div style="{{ sec.boxStyle }}">
+                              <sc-for list="{{ sec.lines }}" as="ln" hint-placeholder-count="4">
+                                <div style="{{ ln.s }}"><sc-for list="{{ ln.spans }}" as="sp" hint-placeholder-count="1"><span style="{{ sp.s }}">{{ sp.t }}</span></sc-for></div>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isQuestion }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:8px 14px 12px;border:1px solid rgba(109,142,240,.28);border-radius:7px;background:rgba(109,142,240,.045);padding:13px 15px">
+                      <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+                        <span style="font:500 10px/1 'JetBrains Mono';color:#6d8ef0;letter-spacing:.12em">QUESTION</span>
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#4a4a54">implement · claude-code · sess_9c14e2</span>
+                      </div>
+                      <div style="font:400 13px/1.65 'JetBrains Mono';color:#c9c9d4;text-wrap:pretty">{{ row.title }}</div>
+                      <sc-for list="{{ row.options }}" as="o" hint-placeholder-count="2">
+                        <div style="display:flex;gap:9px;align-items:baseline;padding:5px 0 0;font:400 12px/1.6 'JetBrains Mono';color:#9a9aa6">
+                          <span style="color:#6d8ef0">{{ o.k }}</span>
+                          <span>{{ o.v }}</span>
+                        </div>
+                      </sc-for>
+                      <div style="display:flex;gap:9px;align-items:center;margin-top:13px">
+                        <div style="flex:1;border:1px solid rgba(255,255,255,.1);border-radius:5px;background:#0a0a0d;padding:9px 11px;font:400 12px/1.4 'JetBrains Mono';color:#c9c9d4">{{ answerText }}<span style="display:inline-block;width:6px;height:12px;background:#6d8ef0;vertical-align:-1px;animation:ck-blink 1.05s step-end infinite"></span></div>
+                        <div onClick="{{ sendAnswer }}" style="border:1px solid rgba(109,142,240,.4);background:rgba(109,142,240,.12);border-radius:5px;padding:9px 14px;font:500 11.5px/1 'JetBrains Mono';color:#9fb2f5;cursor:pointer" style-hover="background:rgba(109,142,240,.22)">Send ⏎</div>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isApproval }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:10px 14px 14px;border:1px solid rgba(201,154,74,.3);border-radius:8px;background:#0e0d0b;overflow:hidden;animation:ck-glow 2.6s ease-in-out infinite">
+                      <div style="display:flex;align-items:center;gap:10px;padding:11px 15px;border-bottom:1px solid rgba(201,154,74,.16);background:rgba(201,154,74,.05)">
+                        <span style="color:#c99a4a;font:400 11px/1">◆</span>
+                        <span style="font:600 12px/1 'JetBrains Mono';color:#d8b878;letter-spacing:.02em">plan-approval</span>
+                        <span style="font:400 11px/1 'JetBrains Mono';color:#7a6a4a">human gate · execution paused</span>
+                        <div style="flex:1"></div>
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#6a5c40">{{ row.meta }}</span>
+                      </div>
+                      <div style="padding:15px 17px">
+                        <sc-for list="{{ row.lines }}" as="ln" hint-placeholder-count="6">
+                          <div style="{{ ln.s }}"><sc-for list="{{ ln.spans }}" as="sp" hint-placeholder-count="1"><span style="{{ sp.s }}">{{ sp.t }}</span></sc-for></div>
+                        </sc-for>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:9px;padding:12px 15px;border-top:1px solid rgba(255,255,255,.05);background:#0b0b0e">
+                        <div onClick="{{ approve }}" style="{{ approveStyle }}">Approve  <span style="opacity:.55">a</span></div>
+                        <div onClick="{{ reject }}" style="border:1px solid rgba(207,96,96,.28);border-radius:5px;padding:8px 15px;font:500 11.5px/1 'JetBrains Mono';color:#b56a6a;cursor:pointer" style-hover="border-color:rgba(207,96,96,.5);color:#cf6060">Reject with note</div>
+                        <div style="flex:1"></div>
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#42424c">{{ decisionNote }}</span>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ row.isSummary }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:10px 14px 16px;border:1px solid rgba(88,168,124,.24);border-radius:8px;background:#0a0d0b;overflow:hidden">
+                      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(88,168,124,.14)">
+                        <span style="color:#58a87c;font:400 12px/1">✓</span>
+                        <span style="font:600 12.5px/1 'JetBrains Mono';color:#7cc79c">run finished · success</span>
+                        <div style="flex:1"></div>
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#4a5a50">{{ row.meta }}</span>
+                      </div>
+                      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-bottom:1px solid rgba(255,255,255,.05)">
+                        <sc-for list="{{ row.stats }}" as="st" hint-placeholder-count="3">
+                          <div style="padding:13px 16px;border-right:1px solid rgba(255,255,255,.05)">
+                            <div style="font:500 9.5px/1 'JetBrains Mono';color:#4a4a54;letter-spacing:.13em">{{ st.k }}</div>
+                            <div style="font:400 15px/1.3 'JetBrains Mono';color:#d6d6de;margin-top:7px">{{ st.v }}</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="padding:13px 16px">
+                        <div style="font:500 9.5px/1 'JetBrains Mono';color:#4a4a54;letter-spacing:.13em;margin-bottom:8px">CHANGED FILES</div>
+                        <sc-for list="{{ row.files }}" as="f" hint-placeholder-count="3">
+                          <div style="display:flex;align-items:baseline;gap:12px;padding:3px 0;font:400 11.5px/1.55 'JetBrains Mono'">
+                            <span style="color:#8f8f9c;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.path }}</span>
+                            <span style="color:#58a87c">{{ f.add }}</span>
+                            <span style="color:#cf6060">{{ f.del }}</span>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="display:flex;gap:9px;align-items:center;padding:12px 16px;border-top:1px solid rgba(255,255,255,.05);background:#0b0b0e">
+                        <div style="border:1px solid rgba(139,139,245,.35);background:rgba(139,139,245,.1);border-radius:5px;padding:8px 14px;font:500 11.5px/1 'JetBrains Mono';color:#a7a7ff;cursor:pointer" style-hover="background:rgba(139,139,245,.2)">Open session in terminal ↗</div>
+                        <div style="border:1px solid rgba(255,255,255,.08);border-radius:5px;padding:8px 14px;font:400 11.5px/1 'JetBrains Mono';color:#8f8f9c;cursor:pointer" style-hover="color:#d6d6de;border-color:rgba(255,255,255,.18)">Create merge request</div>
+                        <div style="flex:1"></div>
+                        <span style="font:400 10.5px/1 'JetBrains Mono';color:#42424c">checkpoint {{ row.right }}</span>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                </div>
+              </sc-for>
+
+              <sc-if value="{{ skeleton }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ skeletonRows }}" as="s" hint-placeholder-count="4">
+                  <div style="{{ s.style }}">
+                    <span style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.08);flex:none"></span>
+                    <span style="height:8px;border-radius:3px;background:rgba(255,255,255,.055);width:{{ s.w }}"></span>
+                  </div>
+                </sc-for>
+              </sc-if>
+            </div>
+
+            <sc-if value="{{ showJump }}" hint-placeholder-val="{{ false }}">
+              <div onClick="{{ toggleFollow }}" style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);border:1px solid rgba(139,139,245,.35);background:rgba(20,20,28,.95);backdrop-filter:blur(6px);border-radius:20px;padding:7px 15px;font:400 11px/1 'JetBrains Mono';color:#a7a7ff;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.5)">↓ jump to live</div>
+            </sc-if>
+          </sc-if>
+        </section>
+
+        <sc-if value="{{ treeOpen }}" hint-placeholder-val="{{ true }}">
+          <aside style="{{ treeStyle }}">
+            <div style="flex:none;display:flex;align-items:baseline;gap:9px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.055);background:#0d0d11">
+              <span style="font:600 12px/1 'JetBrains Mono';color:#c4c4ce">workflow</span>
+              <span style="font:400 10.5px/1.4 'JetBrains Mono';color:#42424c;flex:1">assembled per-task by the analyzer</span>
+              <span onClick="{{ toggleTree }}" style="cursor:pointer;color:#4a4a54;font:500 11px/1 'JetBrains Mono'" style-hover="color:#9a9aa6">]</span>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:9px 6px 24px">
+              <sc-for list="{{ tree }}" as="n" hint-placeholder-count="10">
+                <div onClick="{{ n.onClick }}" style="{{ n.style }}" style-hover="background:rgba(255,255,255,.03)">
+                  <sc-if value="{{ n.isLoop }}" hint-placeholder-val="{{ false }}">
+                    <span style="{{ n.indentStyle }}"></span>
+                    <span style="font:400 11.5px/1.5 'JetBrains Mono';color:#4a4a54">loop</span>
+                    <span style="{{ n.loopStyle }}">{{ n.loopLabel }}</span>
+                    <sc-for list="{{ n.ticks }}" as="t" hint-placeholder-count="0">
+                      <span style="{{ t.style }}"></span>
+                    </sc-for>
+                    <sc-if value="{{ n.arrow }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 9px/1 'JetBrains Mono';color:#5c5c67">→ feedback</span>
+                    </sc-if>
+                  </sc-if>
+                  <sc-if value="{{ n.isBlock }}" hint-placeholder-val="{{ true }}">
+                    <span style="{{ n.indentStyle }}"></span>
+                    <sc-if value="{{ n.connector }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 11px/1.5 'JetBrains Mono';color:#33333c;flex:none">└</span>
+                    </sc-if>
+                    <span style="{{ n.markStyle }}">{{ n.mark }}</span>
+                    <span style="{{ n.nameStyle }}">{{ n.name }}</span>
+                    <span style="font:400 11px/1.5 'JetBrains Mono';color:#3d3d46;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">· {{ n.plugin }}</span>
+                    <sc-if value="{{ n.statusLabel }}" hint-placeholder-val="{{ false }}">
+                      <span style="{{ n.statusStyle }}">{{ n.statusLabel }}</span>
+                    </sc-if>
+                    <sc-if value="{{ n.dur }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 10px/1.5 'JetBrains Mono';color:#3a3a44;flex:none">{{ n.dur }}</span>
+                    </sc-if>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ n.expanded }}" hint-placeholder-val="{{ false }}">
+                  <sc-for list="{{ n.attempts }}" as="at" hint-placeholder-count="0">
+                    <div style="display:flex;align-items:baseline;gap:9px;margin:1px 0 1px 42px;padding:4px 8px;border-left:1px solid rgba(255,255,255,.07);font:400 10.5px/1.5 'JetBrains Mono'">
+                      <span style="{{ at.verdictStyle }}">{{ at.verdict }}</span>
+                      <span style="color:#5c5c67;flex:1">{{ at.label }}</span>
+                      <span style="color:#3a3a44">{{ at.dur }}</span>
+                    </div>
+                  </sc-for>
+                </sc-if>
+              </sc-for>
+            </div>
+          </aside>
+        </sc-if>
+
+      </div>
+    </main>
+  </div>
+
+  <sc-if value="{{ showBar }}" hint-placeholder-val="{{ true }}">
+    <div style="flex:none;display:flex;align-items:center;gap:6px;padding:7px 12px;border-top:1px solid rgba(255,255,255,.06);background:#0a0a0d;flex-wrap:wrap">
+      <span style="font:500 9.5px/1 'JetBrains Mono';color:#3a3a44;letter-spacing:.13em;margin-right:4px">STATE</span>
+      <sc-for list="{{ views }}" as="v" hint-placeholder-count="8">
+        <div onClick="{{ v.onClick }}" style="{{ v.style }}">{{ v.label }}</div>
+      </sc-for>
+      <div style="flex:1"></div>
+      <span style="font:400 10px/1 'JetBrains Mono';color:#33333c">j/k move · o expand · f follow · t tree · ⌘K palette</span>
+    </div>
+  </sc-if>
+</div>
+
+<sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+  <div onClick="{{ closePalette }}" style="position:fixed;inset:0;background:rgba(4,4,6,.66);backdrop-filter:blur(2px);display:flex;align-items:flex-start;justify-content:center;padding-top:14vh;z-index:50">
+    <div style="width:560px;max-width:88vw;border:1px solid rgba(255,255,255,.11);border-radius:9px;background:#0e0e12;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.6)">
+      <div style="padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.06);font:400 13px/1 'JetBrains Mono';color:#6a6a76">&gt; go to state<span style="display:inline-block;width:6px;height:13px;background:#8b8bf5;vertical-align:-2px;margin-left:2px;animation:ck-blink 1.05s step-end infinite"></span></div>
+      <div style="padding:6px 0;max-height:52vh;overflow-y:auto">
+        <sc-for list="{{ views }}" as="v" hint-placeholder-count="8">
+          <div onClick="{{ v.onClick }}" style="{{ v.paletteStyle }}" style-hover="background:rgba(255,255,255,.04)">
+            <span style="color:#4a4a54;width:70px;flex:none">state</span>
+            <span style="flex:1">{{ v.label }}</span>
+            <span style="color:#3a3a44">{{ v.hint }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</sc-if>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:980},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#8b8bf5&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#8b8bf5&quot;,&quot;#6d8ef0&quot;,&quot;#58a87c&quot;,&quot;#c99a4a&quot;],&quot;section&quot;:&quot;Look&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;compact&quot;,&quot;options&quot;:[&quot;compact&quot;,&quot;comfortable&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Look&quot;},&quot;stateBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;simulate&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+class Component extends DCLogic {
+  state = { view: 'running', tick: 0, expanded: {}, sel: null, follow: true, focus: -1, w: 1600,
+            palette: false, treeOpen: true, railOpen: true, wrap: false, decided: null, sent: false };
+
+  C = { bg:'#08080b', panel:'#0b0b0e', t:'#d6d6de', t2:'#9a9aa6', t3:'#64646f', dim:'#4a4a54',
+        vio:'#8b8bf5', blue:'#6d8ef0', green:'#58a87c', amber:'#c99a4a', red:'#cf6060', gray:'#6b6b76' };
+
+  componentDidMount() {
+    this.iv = setInterval(() => { if (this.props.simulate !== false) this.setState(s => ({ tick: s.tick + 1 })); }, 250);
+    window.addEventListener('keydown', this.onKey);
+    window.addEventListener('resize', this.onResize);
+    this.onResize();
+  }
+  componentWillUnmount() { clearInterval(this.iv); window.removeEventListener('keydown', this.onKey); window.removeEventListener('resize', this.onResize); }
+
+  onResize = () => {
+    const w = window.innerWidth;
+    const narrow = w < 1280, tiny = w < 1024;
+    const patch = { w: w };
+    if (narrow !== this._narrow) { patch.treeOpen = !narrow; this._narrow = narrow; }
+    if (tiny !== this._tiny) { patch.railOpen = !tiny; this._tiny = tiny; }
+    this.setState(patch);
+  };
+
+  onKey = (e) => {
+    const k = e.key;
+    if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'k') { e.preventDefault(); this.setState(s => ({ palette: !s.palette })); return; }
+    if (k === 'Escape') { this.setState({ palette: false }); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const rows = this.visibleRows();
+    if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); this.setState(s => ({ focus: Math.min(rows.length - 1, s.focus + 1), follow: false })); }
+    else if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); this.setState(s => ({ focus: Math.max(0, s.focus - 1) })); }
+    else if (k === 'o') { const r = rows[this.state.focus]; if (r) this.toggle(r.id); }
+    else if (k === 'f') this.setState(s => ({ follow: !s.follow }));
+    else if (k === 't') this.setState(s => ({ treeOpen: !s.treeOpen }));
+    else if (k === 'a' && this.state.view === 'approval') this.setState({ decided: 'approved' });
+    else if (k === 'G') this.setState({ follow: true, focus: rows.length - 1 });
+  };
+
+  setView = (v) => this.setState({ view: v, tick: 0, expanded: {}, sel: null, focus: -1, follow: true, palette: false, decided: null, sent: false });
+  toggle = (id) => this.setState(s => ({ expanded: Object.assign({}, s.expanded, { [id]: !s.expanded[id] }) }));
+
+  // ---------- span helpers ----------
+  S = (t, c, x) => ({ t: t, s: 'color:' + (c || this.C.t2) + ';' + (x || '') });
+  L = (spans, x) => ({ spans: spans, s: 'display:block;font:400 11.5px/1.75 "JetBrains Mono";white-space:pre;' + (x || '') });
+  box(v) {
+    if (v === 'term') return 'background:#040406;border:1px solid rgba(255,255,255,.055);border-radius:5px;padding:11px 13px;overflow-x:auto';
+    if (v === 'diff' || v === 'code') return 'background:#0a0a0d;border:1px solid rgba(255,255,255,.055);border-radius:5px;padding:10px 0;overflow-x:auto';
+    if (v === 'md') return 'border-left:2px solid rgba(139,139,245,.3);padding:3px 0 3px 14px';
+    return 'padding:0';
+  }
+  secL(title, variant, lines, note) { return { title, note: note || '', isLines: true, isKV: false, lines, pairs: [], boxStyle: this.box(variant) }; }
+  secKV(title, pairs) { return { title, note: '', isLines: false, isKV: true, lines: [], boxStyle: '', pairs: pairs.map(p => ({ k: p[0], v: p[1], style: 'color:' + (p[2] || this.C.t) })) }; }
+
+  hl(line, lang) {
+    const C = this.C, S = this.S, out = [];
+    const kw = lang === 'rb'
+      ? /\b(def|end|class|module|if|elsif|else|unless|return|do|then|nil|true|false|require|private|attr_reader|rescue|raise|yield)\b/
+      : /\b(const|let|var|function|return|await|async|new|if|else|export|import|null|true|false|class|throw)\b/;
+    const re = new RegExp('(#[^\\n]*|//[^\\n]*|"[^"]*"|\'[^\']*\'|:[a-z_]+|\\b\\d+\\b|' + kw.source.slice(2, -2) + '|[A-Z][A-Za-z0-9_]*)', 'g');
+    let last = 0, m;
+    while ((m = re.exec(line))) {
+      if (m.index > last) out.push(S(line.slice(last, m.index), C.t2));
+      const v = m[0];
+      let col = C.t2;
+      if (v[0] === '#' || v.slice(0, 2) === '//') col = '#4e5a4e';
+      else if (v[0] === '"' || v[0] === "'") col = '#8aa87a';
+      else if (v[0] === ':') col = '#c99a4a';
+      else if (/^\d+$/.test(v)) col = '#c99a4a';
+      else if (kw.test(v)) col = '#a78bf5';
+      else col = '#79a0d8';
+      out.push(S(v, col));
+      last = m.index + v.length;
+    }
+    if (last < line.length) out.push(S(line.slice(last), C.t2));
+    return out.length ? out : [S(line, C.t2)];
+  }
+  codeSec(title, lang, src, note) {
+    const lines = src.split('\n').map((l, i) => this.L(this.hl(l, lang), 'padding:0 13px'));
+    return this.secL(title, 'code', lines, note);
+  }
+  diffSec(title, spec, note) {
+    const C = this.C, S = this.S;
+    const lines = spec.map(d => {
+      const kind = d[0], txt = d[1], hi = d[2];
+      let col = C.t2, bg = '';
+      if (kind === '+') { col = '#7cc79c'; bg = 'background:rgba(88,168,124,.07);'; }
+      else if (kind === '-') { col = '#d08585'; bg = 'background:rgba(207,96,96,.07);'; }
+      else if (kind === 'h') { col = '#8b8bf5'; bg = 'background:rgba(139,139,245,.05);'; }
+      else if (kind === 'f') col = '#5c5c67';
+      let spans;
+      if (hi) {
+        const i = txt.indexOf(hi);
+        spans = [S(txt.slice(0, i), col), S(hi, kind === '+' ? '#b8ecce' : '#f0b3b3', 'background:' + (kind === '+' ? 'rgba(88,168,124,.2)' : 'rgba(207,96,96,.2)') + ';border-radius:2px'), S(txt.slice(i + hi.length), col)];
+      } else spans = [S(txt, col)];
+      return this.L(spans, bg + 'padding:0 13px');
+    });
+    return this.secL(title, 'diff', lines, note);
+  }
+  termSec(title, spec, note) {
+    const S = this.S;
+    return this.secL(title, 'term', spec.map(x => this.L(x.map(p => S(p[0], p[1] || '#8f8f9c', p[2] || '')), 'font-size:11px;line-height:1.7')), note);
+  }
+  mdSec(title, spec) {
+    const S = this.S, C = this.C;
+    return this.secL(title, 'md', spec.map(x => {
+      const k = x[0], t = x[1];
+      if (k === 'h') return this.L([S(t, '#a7a7ff', 'font-weight:600')], 'font-size:12px;padding:1px 0 4px');
+      if (k === 'b') return this.L([S('  • ', C.dim), S(t, C.t)], 'white-space:pre-wrap');
+      if (k === 'c') return this.L([S(t, '#c99a4a')], 'white-space:pre-wrap');
+      if (k === '') return this.L([S(' ', C.dim)], 'font-size:6px');
+      return this.L([S(t, C.t)], 'white-space:pre-wrap');
+    }));
+  }
+
+  // ---------- content ----------
+  db() {
+    if (this._db) return this._db;
+    const C = this.C, S = this.S;
+    const ev = (o) => Object.assign({ kind: 'event', tag: 'event', color: C.t3, dur: '', sections: [], block: '' }, o);
+
+    const sessionEv = ev({ id: 'e1', tag: 'session', color: C.vio, summary: 'claude-code session started', ts: '11:04:02', dur: '', block: 'explore',
+      sections: [this.secKV('SESSION', [['id', 'sess_7f2a91c4', C.vio], ['agent', 'claude-code · sonnet-4.6'], ['cwd', '~/src/ai-interview-assistant'], ['branch', 'cockpit/interview-recovery'], ['mode', 'headless · plugin omc'], ['limits', '1 concurrent run · 40 tool calls / attempt']])] });
+
+    const exploreEv = ev({ id: 'e2', tag: 'agent', color: C.blue, summary: 'explore · map reconnect path', ts: '11:04:03', dur: '12s', block: 'explore',
+      sections: [
+        this.mdSec('PROMPT', [['h', '## explore'], ['p', 'Find every code path that restores an interview session after a dropped websocket. Report where the transcript cursor is persisted and where it is read back.'], [''], ['h', '### output'], ['b', 'file:line references only, no edits'], ['b', 'flag any place the cursor can go stale']]),
+        this.secKV('RESULT', [['files touched', '0'], ['findings', '4', C.green], ['tokens', '18.4k in · 1.2k out'], ['cost', '$0.09', C.amber]])] });
+
+    const rgEv = ev({ id: 'e3', tag: 'bash', color: C.gray, summary: 'rg -n "reconnect" app/ lib/', ts: '11:04:06', dur: '0.4s', block: 'explore',
+      sections: [
+        this.secKV('COMMAND', [['argv', '["rg","-n","reconnect","app/","lib/"]'], ['cwd', '~/src/ai-interview-assistant'], ['exit', '0', C.green], ['duration', '412ms'], ['stdout', '11 lines'], ['stderr', 'empty']]),
+        this.termSec('STDOUT', [
+          [['app/channels/interview_channel.rb', '#79a0d8'], [':', '#4a4a54'], ['48', '#c99a4a'], [':  def ', '#8f8f9c'], ['handle_reconnect', '#d6d6de'], ['(data)', '#8f8f9c']],
+          [['app/services/interview_recovery.rb', '#79a0d8'], [':', '#4a4a54'], ['34', '#c99a4a'], [':    # reconnect resumes from the last persisted cursor', '#4e5a4e']],
+          [['app/services/interview_recovery.rb', '#79a0d8'], [':', '#4a4a54'], ['41', '#c99a4a'], [':      cursor = session.cursor', '#8f8f9c']],
+          [['lib/transcript/stream.rb', '#79a0d8'], [':', '#4a4a54'], ['112', '#c99a4a'], [':  # NOTE: cursor is written every 25 events', '#4e5a4e']]])] });
+
+    const planEv = ev({ id: 'e4', tag: 'plugin', color: C.vio, summary: 'omc:plan · assemble implementation plan', ts: '11:05:11', dur: '48s', block: 'plan',
+      sections: [this.secKV('PLUGIN', [['name', 'omc:plan', C.vio], ['version', '0.9.4'], ['input', 'explore findings + issue body'], ['output', 'plan.md · 6 steps'], ['cost', '$0.31', C.amber]])] });
+
+    const artifactEv = ev({ id: 'e5', tag: 'artifact', color: C.green, summary: '.cockpit-run/repro/interview_recovery_reconnect.md', ts: '11:05:12', dur: '', block: 'plan',
+      sections: [this.mdSec('PREVIEW', [['h', '# Reproduction'], ['b', 'start an interview, stream 30 transcript events'], ['b', 'kill the websocket at event 28'], ['b', 'reconnect → transcript replays from event 25, losing 3'], [''], ['c', 'expected: cursor == last_event.id   got: cursor == last_flushed.id']])] });
+
+    const ckptEv = ev({ id: 'e6', tag: 'checkpoint', color: C.gray, summary: 'checkpoint 4f2a91c · after plan', ts: '11:05:13', dur: '', block: 'plan',
+      sections: [this.secKV('CHECKPOINT', [['sha', '4f2a91c', C.vio], ['blocks completed', 'explore, reproduce, plan'], ['worktree', 'clean'], ['restorable', 'yes', C.green]])] });
+
+    const implEv = ev({ id: 'e7', tag: 'agent', color: C.blue, summary: 'implement · persist cursor on every flush', ts: '11:09:40', dur: '3m12', block: 'implement',
+      sections: [
+        this.mdSec('PROMPT', [['h', '## implement — attempt 2 of 4'], ['p', 'Apply step 3 of the plan: the transcript cursor must advance with every persisted event, not every 25th flush.'], [''], ['h', '### feedback from attempt 1'], ['b', 'attempt 1 moved the write into the channel; the spec still failed because the recovery path reads a memoized value'], ['b', 'clear the memo in InterviewRecovery#resume']]),
+        this.diffSec('PATCH', [
+          ['f', '--- a/app/services/interview_recovery.rb'],
+          ['f', '+++ b/app/services/interview_recovery.rb'],
+          ['h', '@@ -34,9 +34,14 @@ def resume(session)'],
+          [' ', '     def resume(session)'],
+          [' ', '       return unless session.reconnectable?'],
+          ['-', '      cursor = session.cursor', 'session.cursor'],
+          ['+', '      cursor = session.reload.cursor || last_persisted_cursor(session)', 'reload.cursor || last_persisted_cursor(session)'],
+          [' ', ''],
+          ['+', '      @memoized_cursor = nil'],
+          [' ', '       replay_from(cursor)'],
+          [' ', '     end']], '1 file · +6 −1'),
+        this.codeSec('RESULTING METHOD', 'rb', 'def resume(session)\n  return unless session.reconnectable?\n\n  cursor = session.reload.cursor || last_persisted_cursor(session)\n  @memoized_cursor = nil\n\n  replay_from(cursor) # emits every event after the cursor\nend')] });
+
+    const specEv = ev({ id: 'e8', tag: 'bash', color: C.gray, summary: 'bundle exec rspec spec/services/interview_recovery_spec.rb', ts: '11:12:52', dur: '18.6s', block: 'verify',
+      sections: [
+        this.secKV('COMMAND', [['argv', '["bundle","exec","rspec","spec/services/interview_recovery_spec.rb"]'], ['cwd', '~/src/ai-interview-assistant'], ['exit', '0', C.green], ['duration', '18.6s'], ['env', 'RAILS_ENV=test · SEED=41922']]),
+        this.termSec('OUTPUT', [
+          [['$ ', '#4a4a54'], ['bundle exec rspec spec/services/interview_recovery_spec.rb', '#d6d6de']],
+          [['Randomized with seed 41922', '#5c5c67']],
+          [['......', '#58a87c']],
+          [[' ', '']],
+          [['Finished in 18.6 seconds ', '#8f8f9c'], ['(files took 3.1 seconds to load)', '#5c5c67']],
+          [['6 examples, 0 failures', '#58a87c', 'font-weight:500']]])] });
+
+    const failSpecEv = ev({ id: 'f8', tag: 'bash', color: C.red, summary: 'bundle exec rspec spec/services/interview_recovery_spec.rb', ts: '11:08:44', dur: '17.9s', block: 'verify',
+      sections: [
+        this.secKV('COMMAND', [['argv', '["bundle","exec","rspec","spec/services/interview_recovery_spec.rb"]'], ['cwd', '~/src/ai-interview-assistant'], ['exit', '1', C.red], ['duration', '17.9s']]),
+        this.termSec('OUTPUT', [
+          [['$ ', '#4a4a54'], ['bundle exec rspec spec/services/interview_recovery_spec.rb', '#d6d6de']],
+          [['..F...', '#58a87c']],
+          [[' ', '']],
+          [['Failures:', '#cf6060']],
+          [['  1) InterviewRecovery#resume restores the transcript cursor after reconnect', '#d08585']],
+          [['     Failure/Error: expect(session.cursor).to eq(last_event.id)', '#8f8f9c']],
+          [[' ', '']],
+          [['       expected: 8814', '#58a87c']],
+          [['            got: 8802', '#cf6060']],
+          [[' ', '']],
+          [['6 examples, 1 failure', '#cf6060', 'font-weight:500']]])] });
+
+    const verifyEv = ev({ id: 'e9', tag: 'verify', color: C.green, summary: 'verification passed · 3 checks', ts: '11:13:11', dur: '2.4s', block: 'verify',
+      sections: [this.secKV('EVIDENCE', [['rspec', '6 examples · 0 failures', C.green], ['rubocop', '0 offences', C.green], ['reproduction replay', 'no events lost', C.green], ['artifacts', '2 saved']])] });
+
+    const feedbackEv = ev({ id: 'e10', tag: 'feedback', color: C.amber, summary: 'envelope forwarded to attempt 3', ts: '11:09:02', dur: '', block: 'implement',
+      sections: [
+        this.secKV('ENVELOPE', [['from', 'implement · attempt 2', C.t], ['to', 'implement · attempt 3', C.t], ['verdict', 'failed', C.red], ['size', '4.1 kB'], ['strategy', 'narrow — keep patch, fix read path']]),
+        this.codeSec('PAYLOAD', 'js', '{\n  "failed_check": "interview_recovery_spec:34",\n  "expected": 8814,\n  "actual": 8802,\n  "hypothesis": "resume() reads a memoized cursor set before the flush",\n  "keep": ["app/services/interview_recovery.rb:41"],\n  "avoid": ["moving the write into InterviewChannel — tried in attempt 1"]\n}')] });
+
+    const analyzeEv = ev({ id: 'a1', tag: 'analyzer', color: C.vio, summary: 'template selected · bugfix-with-reproduction', ts: '11:03:58', dur: '6.2s', block: '',
+      sections: [this.mdSec('RATIONALE', [['p', 'The issue body contains a stack trace and a user-visible symptom, and the repo has an rspec suite with a reproduction harness.'], [''], ['b', 'reproduction-first template beats plan-first when a failing spec can be written'], ['b', 'visual blocks kept — the transcript panel is user-facing'], ['b', 'code-review loop enabled because the file has 3 owners']])] });
+
+    this._db = { sessionEv, exploreEv, rgEv, planEv, artifactEv, ckptEv, implEv, specEv, failSpecEv, verifyEv, feedbackEv, analyzeEv };
+    return this._db;
+  }
+
+  attemptRow(id, title, meta, right) { return { id, kind: 'attempt', title, meta, right, sections: [] }; }
+
+  rowsFor(view) {
+    const d = this.db(), C = this.C, S = this.S;
+    const pre = [d.sessionEv, d.analyzeEv, d.exploreEv, d.rgEv, d.planEv, d.artifactEv, d.ckptEv];
+    if (view === 'analyzing') return [d.sessionEv, d.analyzeEv, Object.assign({}, d.exploreEv, { live: true })];
+    if (view === 'approval') return pre.concat([{ id: 'ap', kind: 'approval', meta: 'waiting 4m 12s', sections: [],
+      lines: this.mdSec('', [
+        ['h', '# Plan · fix interview recovery after reconnect'],
+        [''], ['b', '1. persist the transcript cursor on every event, not every 25th flush'],
+        ['b', '2. clear the memoized cursor in InterviewRecovery#resume'],
+        ['b', '3. replay strictly after the cursor, deduplicating by event id'],
+        ['b', '4. add a spec that kills the socket mid-stream and reconnects'],
+        ['b', '5. keep the public API of InterviewRecovery unchanged'],
+        [''], ['h', '### risk'], ['p', 'Writing the cursor per event adds one UPDATE per transcript row. Measured at 0.4 ms on the dev dataset; behind ENV["CURSOR_STRICT"] if it regresses.'],
+        [''], ['h', '### files'], ['c', 'app/services/interview_recovery.rb\nlib/transcript/stream.rb\nspec/services/interview_recovery_spec.rb']]).lines }]);
+    if (view === 'running') return pre.concat([
+      this.attemptRow('at2', 'Attempt 2 of 4 — implement', 'sess_9c14e2 · strategy: narrow', 'started 11:09:40'),
+      d.implEv, d.specEv, Object.assign({}, d.verifyEv, { live: true })]);
+    if (view === 'retry') return pre.concat([
+      this.attemptRow('at1', 'Attempt 1 of 4 — implement', 'sess_31b0aa · strategy: broad', '11:06:10 → 11:08:44'),
+      Object.assign({}, d.implEv, { id: 'r7', summary: 'implement · move cursor write into channel', dur: '2m34' }),
+      d.failSpecEv,
+      { id: 'ff', kind: 'failure', title: 'Attempt 1 failed verification: the reconnect spec still replays from a stale cursor. The patch moved the write, but resume() reads a value memoized before the flush.', meta: 'exit 1 · 1 of 6 examples · rollback not required', sections: d.feedbackEv.sections },
+      this.attemptRow('at2', 'Attempt 2 of 4 — implement', 'sess_9c14e2 · strategy: narrow · carries feedback from attempt 1', 'started 11:09:40'),
+      Object.assign({}, d.implEv, { live: true })]);
+    if (view === 'question') return pre.concat([
+      this.attemptRow('at2', 'Attempt 2 of 4 — implement', 'sess_9c14e2 · strategy: narrow', 'started 11:09:40'),
+      d.implEv,
+      { id: 'q1', kind: 'question', sections: [],
+        title: 'The reproduction harness and the production channel disagree on cursor ownership. Which one should own the write after this fix?',
+        options: [{ k: 'a)', v: 'InterviewRecovery — single writer, harness follows it' }, { k: 'b)', v: 'Transcript::Stream — keeps the channel dumb, needs a migration' }] }]);
+    if (view === 'finished') return pre.concat([
+      this.attemptRow('at2', 'Attempt 2 of 4 — implement', 'sess_9c14e2 · strategy: narrow', '11:09:40 → 11:12:52'),
+      d.implEv, d.specEv, d.verifyEv,
+      { id: 'sum', kind: 'summary', meta: '11:04:02 → 11:14:36 · 10m 34s · $2.14', right: 'b91d0f7', sections: [],
+        stats: [{ k: 'BLOCKS', v: '11 / 11' }, { k: 'ATTEMPTS', v: '2 of 4 used' }, { k: 'VERIFICATION', v: '3 / 3 passed' }],
+        files: [{ path: 'app/services/interview_recovery.rb', add: '+14', del: '−3' }, { path: 'lib/transcript/stream.rb', add: '+6', del: '−6' }, { path: 'spec/services/interview_recovery_spec.rb', add: '+41', del: '−0' }] }]);
+    if (view === 'recovery') return pre.concat([
+      this.attemptRow('at2', 'Attempt 2 of 4 — implement', 'sess_9c14e2 · strategy: narrow', 'started 11:09:40'),
+      d.implEv,
+      { id: 'rec', kind: 'banner', title: 'run recovered from checkpoint 4f2a91c — daemon restarted, stream backfilled from cursor 8802', meta: 'gap 00:31 · 0 events lost', sections: [] },
+      Object.assign({}, d.specEv, { live: true })]);
+    return [];
+  }
+
+  visibleRows() {
+    const all = this.rowsFor(this.state.view);
+    const sel = this.state.sel;
+    return sel ? all.filter(r => r.kind !== 'event' || r.block === sel) : all;
+  }
+
+  treeFor(view) {
+    const b = (name, plugin, status, dur, depth, extra) => Object.assign({ id: name, name, plugin, status, dur: dur || '', depth: depth || 0, isBlock: true }, extra || {});
+    const loop = (id, cur, max, ticks, depth) => ({ id, isLoop: true, cur, max, ticks: ticks || [], depth: depth || 0 });
+    const done = 'done', run = 'running', pend = 'pending', fail = 'failed', skip = 'skipped', wait = 'waiting';
+    const base = [
+      b('explore', 'codex', done, '12s'),
+      loop('l1', 1, 3, ['ok']),
+      b('reproduce', 'issue-reproduce', done, '1m04', 1),
+      b('plan', 'omc:plan', done, '48s'),
+      b('plan-approval', 'human-gate', done, '4m12', 0, { gate: true }),
+      loop('l2', 2, 4, ['fail', 'run']),
+      b('implement', 'implement', run, '3m12', 1),
+      b('verify', 'verify', pend, '', 1),
+      b('predictive-verify', 'verify', pend, '', 1),
+      loop('l3', 0, 3, [], 0),
+      b('visual-after', 'visual-reproduce-after', pend, '', 1),
+      b('code-review', 'local-duo-review', pend, ''),
+      b('finalize', 'finalize', pend, '')
+    ];
+    const set = (id, patch) => { const n = base.find(x => x.id === id); if (n) Object.assign(n, patch); };
+    if (view === 'idle') return [];
+    if (view === 'analyzing') return base.map(n => Object.assign({}, n, { status: n.isLoop ? n.status : 'skeleton', dur: '', cur: 0, ticks: [] }));
+    if (view === 'approval') { set('plan-approval', { status: wait, dur: '4m12' }); set('l2', { cur: 0, ticks: [] }); set('implement', { status: pend, dur: '' }); }
+    if (view === 'retry') { set('implement', { status: run, dur: '1m48' }); set('l2', { cur: 2, ticks: ['fail', 'run'], arrow: true }); }
+    if (view === 'question') { set('implement', { status: wait, dur: '4m02' }); }
+    if (view === 'recovery') { set('implement', { status: done, dur: '3m12' }); set('verify', { status: run, dur: '0m18' }); }
+    if (view === 'finished') {
+      ['explore', 'reproduce', 'plan', 'plan-approval', 'implement', 'verify', 'predictive-verify', 'visual-after', 'code-review', 'finalize'].forEach(id => set(id, { status: done }));
+      set('verify', { status: done, dur: '18.6s' }); set('predictive-verify', { status: done, dur: '41s' });
+      set('visual-after', { status: skip, dur: '' }); set('l3', { cur: 0, max: 3, ticks: [] });
+      set('code-review', { status: done, dur: '1m12' }); set('finalize', { status: done, dur: '9s' });
+      set('l2', { cur: 2, max: 4, ticks: ['fail', 'ok'] });
+    }
+    return base;
+  }
+
+  statusColor(s) {
+    const C = this.C;
+    return { done: C.green, running: C.vio, failed: C.red, waiting: C.amber, skipped: C.gray, pending: '#3d3d46', skeleton: '#2a2a32' }[s] || C.gray;
+  }
+
+  headFor(view) {
+    const C = this.C;
+    const t = this.state.tick;
+    const live = view === 'running' || view === 'retry' || view === 'question' || view === 'recovery';
+    const base = Math.floor(t / 4);
+    const fmt = (s) => { const m = Math.floor(s / 60), ss = s % 60; return m + 'm ' + (ss < 10 ? '0' : '') + ss + 's'; };
+    const H = {
+      analyzing: { chip: 'new', chipC: C.blue, title: 'Fix interview recovery after reconnect', status: 'analyzing', sc: C.vio, cost: '—— · claude all-time', elapsed: fmt(6 + base), note: 'assembling workflow', cancel: true, retry: false },
+      approval: { chip: 'waiting', chipC: C.amber, title: 'Fix interview recovery after reconnect', status: 'waiting · approval', sc: C.amber, cost: '~$0.52 · claude all-time', elapsed: fmt(252 + base), note: 'plan gate open', cancel: true, retry: false },
+      running: { chip: 'running', chipC: C.vio, title: 'Fix interview recovery after reconnect', status: 'running', sc: C.vio, cost: '~$1.84 · claude all-time', elapsed: fmt(492 + base), note: 'attempt 2 of 4', cancel: true, retry: false },
+      retry: { chip: 'running', chipC: C.vio, title: 'Fix interview recovery after reconnect', status: 'running · retrying', sc: C.amber, cost: '~$1.21 · claude all-time', elapsed: fmt(310 + base), note: 'attempt 1 failed', cancel: true, retry: true },
+      question: { chip: 'waiting', chipC: C.blue, title: 'Fix interview recovery after reconnect', status: 'waiting · question', sc: C.blue, cost: '~$1.66 · claude all-time', elapsed: fmt(430 + base), note: 'session asked a question', cancel: true, retry: false },
+      recovery: { chip: 'running', chipC: C.vio, title: 'Fix interview recovery after reconnect', status: 'running · recovered', sc: C.vio, cost: '~$1.92 · claude all-time', elapsed: fmt(560 + base), note: 'daemon restarted 00:31 ago', cancel: true, retry: false },
+      finished: { chip: 'done', chipC: C.green, title: 'Fix interview recovery after reconnect', status: 'success', sc: C.green, cost: '$2.14 · claude all-time', elapsed: '10m 34s', note: 'merge request ready', cancel: false, retry: true }
+    }[view];
+    if (!base && !H) return null;
+    if (!H) return null;
+    const chipStyle = 'flex:none;white-space:nowrap;border:1px solid ' + H.chipC + '3d;background:' + H.chipC + '14;color:' + H.chipC + ';border-radius:5px;padding:5px 12px;font:600 12px/1.25 "Poppins";margin-top:1px';
+    const statusStyle = 'flex:none;white-space:nowrap;border:1px solid ' + H.sc + '30;background:' + H.sc + '10;color:' + H.sc + ';border-radius:4px;padding:5px 10px;font:500 11.5px/1 "Poppins"';
+    return { chip: H.chip, chipStyle, title: H.title, source: 'linear ENG-4471', status: H.status, statusStyle,
+      cost: H.cost, elapsed: H.elapsed, note: H.note, showCancel: H.cancel, showRetry: H.retry,
+      primaryStyle: 'border:1px solid rgba(139,139,245,.4);background:rgba(139,139,245,.12);border-radius:5px;padding:6px 13px;font:600 12px/1.3 "Poppins";color:#a7a7ff;cursor:pointer;white-space:nowrap' };
+  }
+
+  renderVals() {
+    const C = this.C, s = this.state, view = s.view;
+    const density = this.props.density === 'comfortable' ? 1 : 0;
+    const rowPad = density ? '7px 14px' : '4px 14px';
+    const accent = this.props.accent || C.vio;
+    const narrow = s.w < 1280, tiny = s.w < 1024;
+    const tagW = narrow ? 58 : 74, tsW = narrow ? 0 : 52, durW = narrow ? 36 : 44;
+
+    const viewDefs = [['idle', 'idle', 'new task'], ['analyzing', 'analyzing', 'template pick'], ['approval', 'approval', 'human gate'],
+      ['running', 'running', 'live stream'], ['retry', 'retry', 'attempt 1 failed'], ['question', 'question', 'inline answer'],
+      ['finished', 'finished', 'summary card'], ['recovery', 'recovery', 'after restart']];
+    const views = viewDefs.map(v => ({
+      label: v[1], hint: v[2], onClick: () => this.setView(v[0]),
+      style: 'cursor:pointer;border:1px solid ' + (view === v[0] ? accent + '55' : 'rgba(255,255,255,.07)') + ';background:' + (view === v[0] ? accent + '18' : 'transparent') + ';color:' + (view === v[0] ? '#c3c3ff' : '#6a6a76') + ';border-radius:4px;padding:4px 10px;font:400 10.5px/1.4 "JetBrains Mono"',
+      paletteStyle: 'display:flex;gap:14px;align-items:baseline;padding:8px 16px;cursor:pointer;font:400 12px/1.5 "JetBrains Mono";color:' + (view === v[0] ? '#c3c3ff' : '#9a9aa6') + ';background:' + (view === v[0] ? 'rgba(139,139,245,.08)' : 'transparent')
+    }));
+
+    const taskDefs = [
+      { id: 't1', title: 'Fix interview recovery after reconnect', st: 'running', time: '4m', badge: '' },
+      { id: 't2', title: 'Add AI provider connection status', st: 'waiting', time: '12m', badge: 'approval' },
+      { id: 't3', title: 'Fix live transcript auto-scrolling', st: 'failed', time: '1h', badge: '' },
+      { id: 't4', title: 'Refactor interview mode configuration', st: 'done', time: '3h', badge: '' },
+      { id: 't5', title: 'Add Codex fallback for provider outages', st: 'done', time: '5h', badge: '' },
+      { id: 't6', title: 'Interview export: include speaker labels', st: 'done', time: 'yd', badge: '' }
+    ];
+    if (view === 'question') { taskDefs[0].st = 'waiting'; taskDefs[0].badge = 'question'; }
+    if (view === 'approval') { taskDefs[0].st = 'waiting'; taskDefs[0].badge = 'approval'; }
+    if (view === 'finished') { taskDefs[0].st = 'done'; }
+    const sorted = taskDefs.slice().sort((a, b) => (b.badge ? 1 : 0) - (a.badge ? 1 : 0));
+    const dotFor = (st) => ({ running: '●', waiting: '◐', failed: '✕', done: '✓', new: '○' }[st] || '○');
+    const tasks = sorted.map((t, i) => {
+      const selected = view !== 'idle' && t.id === 't1';
+      const col = this.statusColor({ running: 'running', waiting: 'waiting', failed: 'failed', done: 'done' }[t.st]);
+      return { title: t.title, time: t.time, badge: t.badge,
+        dot: dotFor(t.st),
+        dotStyle: 'flex:none;width:12px;color:' + col + ';font-size:9px;' + (t.st === 'running' ? 'animation:ck-pulse 1.8s ease-in-out infinite;display:inline-block' : ''),
+        badgeStyle: 'flex:none;border:1px solid ' + C.amber + '38;background:' + C.amber + '14;color:' + C.amber + ';border-radius:3px;padding:2px 6px;font:400 9px/1.3 "JetBrains Mono"',
+        style: 'display:flex;align-items:center;gap:8px;padding:' + (density ? '8px' : '6px') + ' 8px;border-radius:5px;cursor:pointer;font:400 12.5px/1.45 "Poppins";color:' + (selected ? '#dcdce6' : '#8a8a96') + ';background:' + (selected ? 'rgba(255,255,255,.045)' : 'transparent') + ';border:1px solid ' + (selected ? 'rgba(255,255,255,.08)' : 'transparent'),
+        onClick: () => this.setView(view === 'idle' ? 'running' : view) };
+    });
+
+    const activity = [
+      { text: 'implement · attempt 2 started', c: C.vio }, { text: 'plan approved by you', c: C.green },
+      { text: 'reproduce · spec written', c: C.green }, { text: 'daemon restarted · 1 run recovered', c: C.blue }
+    ].map(a => ({ text: a.text, dotStyle: 'color:' + a.c + ';font-size:7px;flex:none' }));
+
+    const rawRows = this.visibleRows();
+    const revealed = (view === 'running' || view === 'recovery') ? Math.min(rawRows.length, 5 + Math.floor(s.tick / 5)) : rawRows.length;
+    const shown = rawRows.slice(0, revealed);
+
+    const rows = shown.map((r, i) => {
+      const open = !!s.expanded[r.id];
+      const focused = s.focus === i;
+      const isLive = !!r.live && i === shown.length - 1;
+      const col = r.color || C.t3;
+      return {
+        id: r.id, isEvent: r.kind === 'event', isAttempt: r.kind === 'attempt', isApproval: r.kind === 'approval',
+        isQuestion: r.kind === 'question', isBanner: r.kind === 'banner', isSummary: r.kind === 'summary', isFailure: r.kind === 'failure',
+        open: open && (r.sections || []).length > 0, sections: r.sections || [],
+        title: r.title || '', meta: r.meta || '', right: r.right || '', lines: r.lines || [],
+        options: r.options || [], stats: r.stats || [], files: r.files || [],
+        tag: r.tag || '', summary: r.summary || '', ts: r.ts || '', dur: r.dur || '', metaText: '', live: isLive,
+        wrapStyle: 'animation:ck-in .18s ease-out',
+        rowStyle: 'display:flex;align-items:baseline;gap:10px;padding:' + rowPad + ';cursor:pointer;border-left:2px solid ' + (focused ? accent : 'transparent') + ';background:' + (focused ? 'rgba(139,139,245,.06)' : open ? 'rgba(255,255,255,.022)' : 'transparent'),
+        dotStyle: 'flex:none;width:5px;height:5px;border-radius:50%;background:' + col + ';transform:translateY(-2px);' + (isLive ? 'animation:ck-pulse 1.6s ease-in-out infinite' : ''),
+        tagStyle: 'flex:none;min-width:' + tagW + 'px;font:400 10.5px/1.7 "JetBrains Mono";color:' + col + ';letter-spacing:.02em',
+        tsStyle: 'flex:none;font:400 10.5px/1.5 "JetBrains Mono";color:#3a3a44;min-width:' + tsW + 'px;text-align:right;' + (narrow ? 'display:none' : ''),
+        durStyle: 'flex:none;font:400 10.5px/1.5 "JetBrains Mono";color:#3a3a44;min-width:' + durW + 'px;text-align:right',
+        sumStyle: 'flex:1;min-width:0;font:400 12px/1.7 "JetBrains Mono";color:' + (focused || open ? '#dcdce6' : '#a2a2ae') + ';' + (s.wrap ? 'white-space:pre-wrap;word-break:break-all' : 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'),
+        attemptStyle: 'display:flex;align-items:center;gap:11px;margin:14px 14px 6px;padding:8px 12px;border:1px solid rgba(255,255,255,.08);border-left:2px solid ' + accent + ';border-radius:5px;background:rgba(255,255,255,.022)',
+        onToggle: () => { this.setState({ focus: i }); this.toggle(r.id); }
+      };
+    });
+
+    const treeRaw = this.treeFor(view);
+    const tree = treeRaw.map(n => {
+      if (n.isLoop) {
+        const ticks = (n.ticks || []).map(t => ({ style: 'width:6px;height:6px;border-radius:50%;flex:none;background:' + (t === 'fail' ? C.red : t === 'run' ? accent : C.green) + ';' + (t === 'run' ? 'animation:ck-pulse 1.6s ease-in-out infinite' : '') }));
+        return { isLoop: true, isBlock: false, loopLabel: n.cur + '/' + n.max, ticks, arrow: !!n.arrow, expanded: false, attempts: [],
+          indentStyle: 'flex:none;width:' + (n.depth * 16) + 'px',
+          loopStyle: 'border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);border-radius:3px;padding:1px 6px;font:500 10px/1.5 "JetBrains Mono";color:' + (n.cur ? '#c4c4ce' : '#55555f'),
+          style: 'display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:4px', onClick: () => {} };
+      }
+      const sel = s.sel === n.id;
+      const col = this.statusColor(n.status);
+      const skeleton = n.status === 'skeleton';
+      const labels = { running: '● running', waiting: '● waiting', failed: '● failed', skipped: '● skipped' };
+      const showAttempts = n.id === 'implement' && (view === 'retry' || view === 'finished');
+      return {
+        isLoop: false, isBlock: true, name: n.name, plugin: n.plugin, dur: n.dur, connector: n.depth > 0,
+        indentStyle: 'flex:none;width:' + (n.depth * 14) + 'px',
+        mark: n.gate ? '◆' : '',
+        markStyle: 'flex:none;color:' + (n.status === 'waiting' ? C.amber : col) + ';font-size:8px;' + (n.gate ? '' : 'display:none'),
+        nameStyle: 'flex:none;font:600 11.5px/1.6 "JetBrains Mono";color:' + (skeleton ? '#2f2f38' : n.status === 'pending' ? '#6a6a76' : n.status === 'skipped' ? '#4e4e58' : '#d2d2dc') + ';' + (n.status === 'running' ? 'text-shadow:0 0 12px ' + accent + '55' : ''),
+        statusLabel: labels[n.status] || '',
+        statusStyle: 'flex:none;font:400 10px/1.5 "JetBrains Mono";color:' + col + ';' + (n.status === 'running' ? 'animation:ck-sweep 2s ease-in-out infinite' : ''),
+        style: 'display:flex;align-items:baseline;gap:6px;padding:' + (density ? '5px' : '3px') + ' 8px;border-radius:4px;cursor:pointer;background:' + (sel ? 'rgba(139,139,245,.1)' : n.status === 'running' ? 'rgba(139,139,245,.05)' : 'transparent') + ';border:1px solid ' + (sel ? 'rgba(139,139,245,.3)' : 'transparent') + ';opacity:' + (n.status === 'skipped' ? '.45' : '1'),
+        expanded: showAttempts,
+        attempts: showAttempts ? [
+          { verdict: '✕', verdictStyle: 'color:' + C.red, label: 'attempt 1 · sess_31b0aa · ckpt 4f2a91c', dur: '2m34' },
+          { verdict: view === 'finished' ? '✓' : '●', verdictStyle: 'color:' + (view === 'finished' ? C.green : accent), label: 'attempt 2 · sess_9c14e2 · ckpt b91d0f7', dur: view === 'finished' ? '3m12' : '1m48' }
+        ] : [],
+        onClick: () => this.setState(st => ({ sel: st.sel === n.id ? null : n.id, focus: -1 }))
+      };
+    });
+
+    const head = this.headFor(view);
+    const streamLabels = {
+      analyzing: ['analyzer', 'selecting workflow template'], approval: ['plan-approval', 'paused for human gate'],
+      running: ['implement__attempt-2', 'live'], retry: ['implement__attempt-2', 'live · carries feedback'],
+      question: ['implement__attempt-2', 'blocked on question'], recovery: ['verify__attempt-2', 'backfilled'],
+      finished: ['finalize', 'closed 11:14:36']
+    }[view] || ['idle', ''];
+
+    return {
+      views, tasks, activity, rows, tree, head,
+      hasTask: view !== 'idle', hasStream: view !== 'idle', isIdle: view === 'idle',
+      treeOpen: s.treeOpen && view !== 'idle',
+      treeStyle: (narrow
+        ? 'position:absolute;top:12px;right:12px;bottom:12px;z-index:20;box-shadow:0 12px 44px rgba(0,0,0,.62);width:340px'
+        : 'width:352px;position:relative') + ';flex:none;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:#0b0b0e;display:flex;flex-direction:column;overflow:hidden',
+      streamStyle: 'flex:1;min-width:' + (tiny ? 380 : 520) + 'px;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:#0b0b0e;display:flex;flex-direction:column;overflow:hidden;position:relative;' + (narrow && s.treeOpen && view !== 'idle' ? 'margin-right:352px' : ''),
+      showTreeToggle: narrow && view !== 'idle',
+      treeToggleLabel: s.treeOpen ? 'workflow ✕' : 'workflow',
+      railCompact: !s.railOpen, railExpanded: s.railOpen, railToggleGlyph: s.railOpen ? '[' : ']',
+      compactTasks: sorted.slice(0, 6).map(t => ({
+        dot: dotFor(t.st), title: t.title,
+        style: 'display:flex;align-items:center;justify-content:center;height:30px;border-radius:5px;cursor:pointer;font-size:10px;color:' + this.statusColor({ running: 'running', waiting: 'waiting', failed: 'failed', done: 'done' }[t.st]) + ';background:' + (t.id === 't1' && view !== 'idle' ? 'rgba(255,255,255,.05)' : 'transparent') + ';' + (t.st === 'running' ? 'animation:ck-pulse 1.8s ease-in-out infinite' : '')
+      })),
+      showBar: this.props.stateBar !== false,
+      paletteOpen: s.palette,
+      skeleton: view === 'analyzing', skeletonRows: [{ w: '46%' }, { w: '62%' }, { w: '38%' }, { w: '55%' }].map(x => ({ w: x.w, style: 'display:flex;align-items:center;gap:10px;padding:' + rowPad + ';margin-left:2px;opacity:.7;animation:ck-sweep 1.8s ease-in-out infinite' })),
+      streamLabel: streamLabels[0], streamSub: streamLabels[1],
+      runDotStyle: 'width:9px;height:9px;border-radius:50%;flex:none;border:2px solid ' + (view === 'finished' ? C.green : view === 'approval' || view === 'question' ? C.amber : accent) + ';' + (view === 'running' || view === 'retry' || view === 'recovery' ? 'animation:ck-pulse 1.6s ease-in-out infinite' : ''),
+      filterLabel: s.sel || '',
+      clearFilter: () => this.setState({ sel: null }),
+      toggleFollow: () => this.setState(st => ({ follow: !st.follow })),
+      toggleWrap: () => this.setState(st => ({ wrap: !st.wrap })),
+      toggleTree: () => this.setState(st => ({ treeOpen: !st.treeOpen })),
+      toggleRail: () => this.setState(st => ({ railOpen: !st.railOpen })),
+      closePalette: () => this.setState({ palette: false }),
+      goIdle: () => this.setView('idle'),
+      goAnalyzing: () => this.setView('analyzing'),
+      approve: () => this.setState({ decided: 'approved' }),
+      reject: () => this.setState({ decided: 'rejected' }),
+      sendAnswer: () => this.setState({ sent: true }),
+      answerText: s.sent ? 'a — InterviewRecovery owns the write' : 'a',
+      decisionNote: s.decided === 'approved' ? 'approved — resuming implement' : s.decided === 'rejected' ? 'rejected — feedback returned to plan' : 'execution resumes on decision',
+      approveStyle: 'border:1px solid rgba(88,168,124,' + (s.decided === 'approved' ? '.6' : '.35') + ');background:rgba(88,168,124,' + (s.decided === 'approved' ? '.2' : '.1') + ');border-radius:5px;padding:8px 15px;font:500 11.5px/1 "JetBrains Mono";color:#7cc79c;cursor:pointer',
+      followStyle: 'cursor:pointer;border:1px solid ' + (s.follow ? accent + '4d' : 'rgba(255,255,255,.07)') + ';background:' + (s.follow ? accent + '14' : 'transparent') + ';color:' + (s.follow ? '#a7a7ff' : '#55555f') + ';border-radius:4px;padding:3px 8px;font:400 10px/1.4 "JetBrains Mono"',
+      wrapStyle: 'cursor:pointer;border:1px solid ' + (s.wrap ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.07)') + ';color:' + (s.wrap ? '#c4c4ce' : '#55555f') + ';border-radius:4px;padding:3px 8px;font:400 10px/1.4 "JetBrains Mono"',
+      showJump: !s.follow && view !== 'idle' && view !== 'finished',
+      railStyle: 'width:' + (s.railOpen ? '272px' : '54px') + ';flex:none;border-right:1px solid rgba(255,255,255,.06);background:#0a0a0d;display:flex;flex-direction:column;overflow:hidden;transition:width .16s ease',
+      recent: [
+        { title: 'Add AI provider connection status', st: 'waiting', meta: 'waiting · 12m' },
+        { title: 'Fix live transcript auto-scrolling', st: 'failed', meta: 'failed · 1h' },
+        { title: 'Refactor interview mode configuration', st: 'done', meta: 'success · 3h' },
+        { title: 'Add Codex fallback for provider outages', st: 'done', meta: 'success · 5h' }
+      ].map(r => ({ title: r.title, meta: r.meta, dot: dotFor(r.st), dotStyle: 'color:' + this.statusColor({ waiting: 'waiting', failed: 'failed', done: 'done' }[r.st]) + ';font-size:9px;flex:none;width:12px' }))
+    };
+  }
+}
+</script>
+</body>
+</html>

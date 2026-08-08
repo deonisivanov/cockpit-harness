@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "start": "node dist/main.js",
-    "test": "vitest run"
+    "test": "tsc -b tsconfig.json && tsc -p tsconfig.test.json && vitest run"
   },
   "dependencies": {
     "@cockpit/core": "workspace:*",

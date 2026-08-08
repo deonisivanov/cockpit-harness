@@ -99,6 +99,8 @@ export class WorkspaceManager extends Context.Tag("cockpit/WorkspaceManager")<
     }) => Effect.Effect<Workspace, WorkspaceError>
     readonly reconcile: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
     readonly remove: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
+    /** The repository root a path belongs to; fails when it is not one, which registration needs. */
+    readonly resolveRepo: (repoPath: string) => Effect.Effect<string, WorkspaceError>
   }
 >() {}
 
@@ -160,6 +162,8 @@ export const WorkspaceManagerLive = Layer.effect(
             })
           }
         }),
+
+      resolveRepo: (repoPath) => git("resolve", repoPath, "rev-parse", "--show-toplevel"),
 
       remove: (workspace) =>
         requireInsideRoot("remove", workspace.path).pipe(

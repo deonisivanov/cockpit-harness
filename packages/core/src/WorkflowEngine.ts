@@ -2,7 +2,7 @@ import { Context, Deferred, Effect, Exit, HashMap, Layer, Ref } from "effect"
 import { randomUUID } from "node:crypto"
 import { mkdir, readFile, rm } from "node:fs/promises"
 import * as NodePath from "node:path"
-import { ArtifactStore, readAgentOutput } from "./ArtifactStore.js"
+import { AgentOutput, ArtifactStore, readAgentOutput } from "./ArtifactStore.js"
 import { ClaudeCodeProvider } from "./ClaudeCodeProvider.js"
 import { CodexProvider } from "./CodexProvider.js"
 import { CommandRunner, CommandSpec, matchArtifacts } from "./CommandRunner.js"
@@ -19,7 +19,13 @@ import { AttemptEvidence, buildFailurePacket } from "./failure.js"
 import { ArtifactId, AttemptId, BlockId, CheckpointId, RunId, SessionId } from "./ids.js"
 import { Journal } from "./Journal.js"
 import { PluginCatalog, PreflightResult } from "./PluginCatalog.js"
-import { Provider, ProviderEvent, ProviderName, runToResult } from "./Provider.js"
+import {
+  Provider,
+  ProviderEvent,
+  ProviderName,
+  ProviderResult,
+  runToResult,
+} from "./Provider.js"
 import { AttemptInput, AttemptOutcome, RetryCoordinator } from "./RetryCoordinator.js"
 import { clip, outputBudget, renderSlots } from "./text.js"
 import { CheckpointService, Workspace } from "./Workspace.js"
@@ -69,6 +75,12 @@ export class WorkflowEngine extends Context.Tag("cockpit/WorkflowEngine")<
       gateId: BlockId,
       approved: boolean,
       note?: string,
+    ) => Effect.Effect<void, JournalError>
+    /** Resumes the suspended session of the attempt that asked; the same attempt carries on. */
+    readonly answerQuestion: (
+      runId: RunId,
+      blockId: BlockId,
+      answer: string,
     ) => Effect.Effect<void, JournalError>
   }
 >() {}
@@ -231,7 +243,35 @@ export const WorkflowEngineLive = Layer.effect(
     const gates = yield* Ref.make(
       HashMap.empty<string, Deferred.Deferred<{ approved: boolean; note?: string }>>(),
     )
-    const gateKey = (runId: RunId, gateId: BlockId) => `${runId}:${gateId}`
+    const questions = yield* Ref.make(HashMap.empty<string, Deferred.Deferred<string>>())
+    const pendingKey = (runId: RunId, blockId: BlockId) => `${runId}:${blockId}`
+
+    /**
+     * Parks the attempt on the answer the way a gate parks on a decision (plan §10). Nothing is
+     * journaled here: the QuestionAsked the stream produced is already in the log, and a block
+     * waiting on it is exactly "asked, not yet answered" — no run or attempt status says it.
+     */
+    const awaitAnswer = (runId: RunId, blockId: BlockId) =>
+      Effect.acquireUseRelease(
+        Effect.tap(Deferred.make<string>(), (deferred) =>
+          Ref.update(questions, HashMap.set(pendingKey(runId, blockId), deferred)),
+        ),
+        Deferred.await,
+        () => Ref.update(questions, HashMap.remove(pendingKey(runId, blockId))),
+      )
+
+    const resolvePending = <A>(
+      op: string,
+      pending: HashMap.HashMap<string, Deferred.Deferred<A>>,
+      key: string,
+      value: A,
+      missing: string,
+    ) => {
+      const deferred = HashMap.get(pending, key)
+      return deferred._tag === "None"
+        ? Effect.fail(new JournalError({ op, detail: missing }))
+        : Effect.asVoid(Deferred.succeed(deferred.value, value))
+    }
 
     const requestApproval = (runId: RunId, gateId: BlockId, payload: GatePayload) =>
       Effect.gen(function* () {
@@ -242,7 +282,7 @@ export const WorkflowEngineLive = Layer.effect(
           name: "approval.json",
           content: JSON.stringify(payload, null, 2),
         })
-        const key = gateKey(runId, gateId)
+        const key = pendingKey(runId, gateId)
         // Registration and removal are one bracket: a failed ApprovalRequested must not leave a
         // deferred behind for `approveGate` to resolve into nothing.
         const decision = yield* Effect.acquireUseRelease(
@@ -568,6 +608,7 @@ export const WorkflowEngineLive = Layer.effect(
               transcript: [] as ReadonlyArray<string>,
               stderr: [] as ReadonlyArray<string>,
               reported: undefined as SessionId | undefined,
+              question: undefined as string | undefined,
             })
 
             const onEvent = (event: ProviderEvent) =>
@@ -583,6 +624,7 @@ export const WorkflowEngineLive = Layer.effect(
                       ? [...acc.stderr, event.text]
                       : acc.stderr,
                   reported: event._tag === "SessionStarted" ? event.sessionId : acc.reported,
+                  question: event._tag === "QuestionAsked" ? event.question : acc.question,
                 }))
                 if (event._tag === "AgentActivity") {
                   yield* journal.append({
@@ -617,31 +659,75 @@ export const WorkflowEngineLive = Layer.effect(
                 }
               }).pipe(Effect.ignoreLogged)
 
-            const result = yield* coordinator.withTechnicalRetries(
-              { runId, blockId, policy: input.policy },
-              Effect.zipRight(
-                // A technical retry is a fresh invocation, so the file a previous try left behind
-                // has to go — otherwise it would be read as this one's result.
-                Effect.promise(() => rm(outputPath, { force: true })),
-                runToResult(
-                  providerFor(def).run({
-                    prompt,
-                    cwd: workspace.path,
-                    sessionId: input.session.assigned,
-                    resumeSessionId: input.session.resume,
-                    // Downgraded, not silenced: a block in a read-only branch still owes the run
-                    // its result, so it keeps the one write it needs.
-                    permissionProfile: input.readOnly ? "read-plus-output" : def.permissionProfile,
-                    outputDir: dir,
-                    timeoutMs: input.timeoutMs,
-                    // Where the result belongs and which block is asking for it; the prompt states
-                    // the same obligation in words.
-                    env: { COCKPIT_OUTPUT: outputPath, COCKPIT_BLOCK: def.id },
-                  }),
-                  onEvent,
-                ),
-              ),
+            // A technical retry is a fresh invocation, so what a previous try left behind has to
+            // go: its result file would be read as this one's, and its question would park an
+            // attempt that this session never suspended.
+            const fresh = Effect.zipRight(
+              Effect.promise(() => rm(outputPath, { force: true })),
+              Ref.update(seen, (acc) => ({ ...acc, question: undefined })),
             )
+
+            const invoke = (text: string, resume: SessionId | undefined) =>
+              coordinator.withTechnicalRetries(
+                { runId, blockId, policy: input.policy },
+                Effect.zipRight(
+                  fresh,
+                  runToResult(
+                    providerFor(def).run({
+                      prompt: text,
+                      cwd: workspace.path,
+                      sessionId: input.session.assigned,
+                      resumeSessionId: resume,
+                      // Downgraded, not silenced: a block in a read-only branch still owes the run
+                      // its result, so it keeps the one write it needs.
+                      permissionProfile: input.readOnly
+                        ? "read-plus-output"
+                        : def.permissionProfile,
+                      outputDir: dir,
+                      timeoutMs: input.timeoutMs,
+                      // Where the result belongs and which block is asking for it; the prompt states
+                      // the same obligation in words.
+                      env: { COCKPIT_OUTPUT: outputPath, COCKPIT_BLOCK: def.id },
+                    }),
+                    onEvent,
+                  ),
+                ),
+              )
+
+            /**
+             * A question is a suspension only when the session left without its result (plan §10):
+             * one that asked and still delivered has answered itself. The answer resumes that same
+             * session inside the same attempt, so the block keeps its timeout and its history.
+             */
+            const drive = (
+              text: string,
+              resume: SessionId | undefined,
+            ): Effect.Effect<{ result: ProviderResult; written: AgentOutput }, EngineError> =>
+              Effect.gen(function* () {
+                const result = yield* invoke(text, resume)
+                const written = yield* readAgentOutput(outputPath)
+                const { question, reported } = yield* Ref.get(seen)
+                if (question === undefined || written.text !== undefined) {
+                  return { result, written }
+                }
+                const session = result.sessionId ?? reported ?? input.session.assigned
+                const answer = yield* awaitAnswer(runId, blockId)
+                yield* journal.append({
+                  runId,
+                  blockId,
+                  attemptId,
+                  payload: { _tag: "QuestionAnswered", answer },
+                })
+                yield* journal.append({
+                  runId,
+                  blockId,
+                  attemptId,
+                  payload: { _tag: "SessionResumed", sessionId: session },
+                })
+                return yield* drive(answer, session)
+              })
+
+            const { result, written } = yield* drive(prompt, input.session.resume)
 
             const observed = yield* Ref.get(seen)
             yield* Ref.update(state, (value) => ({
@@ -674,7 +760,6 @@ export const WorkflowEngineLive = Layer.effect(
 
             yield* captureStateFiles(input.binding, blockId, attemptId)
 
-            const written = yield* readAgentOutput(outputPath)
             const parsed = written.text === undefined ? undefined : safeJson(written.text)
             const outputRef =
               written.text === undefined
@@ -1132,17 +1217,26 @@ export const WorkflowEngineLive = Layer.effect(
     return {
       run,
       approveGate: (runId, gateId, approved, note) =>
-        Effect.flatMap(Ref.get(gates), (pending) => {
-          const deferred = HashMap.get(pending, gateKey(runId, gateId))
-          return deferred._tag === "None"
-            ? Effect.fail(
-                new JournalError({
-                  op: "approveGate",
-                  detail: `run ${runId} has no gate ${gateId} awaiting a decision`,
-                }),
-              )
-            : Effect.asVoid(Deferred.succeed(deferred.value, { approved, note }))
-        }),
+        Effect.flatMap(Ref.get(gates), (pending) =>
+          resolvePending(
+            "approveGate",
+            pending,
+            pendingKey(runId, gateId),
+            { approved, note },
+            `run ${runId} has no gate ${gateId} awaiting a decision`,
+          ),
+        ),
+
+      answerQuestion: (runId, blockId, answer) =>
+        Effect.flatMap(Ref.get(questions), (pending) =>
+          resolvePending(
+            "answerQuestion",
+            pending,
+            pendingKey(runId, blockId),
+            answer,
+            `run ${runId} has no question awaiting an answer on block ${blockId}`,
+          ),
+        ),
     }
   }),
 )

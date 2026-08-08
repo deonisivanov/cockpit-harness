@@ -1,0 +1,186 @@
+import { expect, test } from "@playwright/test"
+
+test("boots with three panels and a populated stream", async ({ page }) => {
+  await page.goto("/?mock=running")
+
+  await expect(page.getByTestId("rail")).toBeVisible()
+  await expect(page.getByTestId("stream")).toBeVisible()
+  await expect(page.getByTestId("tree")).toBeVisible()
+
+  await expect(page.getByText("ai-interview-assistant")).toBeVisible()
+  await expect(page.getByText("Fix interview recovery after reconnect").first()).toBeVisible()
+
+  // The elapsed clock is derived from the RunStarted event, not a column on the run row.
+  await expect(page.getByTestId("elapsed")).toHaveText(/^\d+m \d{2}s$/)
+
+  const rows = page.getByTestId("event-row")
+  await expect(rows.first()).toBeVisible()
+  await expect(rows.filter({ hasText: "session started" }).first()).toBeVisible()
+  await expect(page.getByTestId("attempt-header").first()).toBeVisible()
+})
+
+test("tree shows block statuses, the gate and the loop indicator", async ({ page }) => {
+  await page.goto("/?mock=retry")
+
+  const tree = page.getByTestId("tree")
+  await expect(tree.getByTestId("tree-node").filter({ hasText: "explore" })).toHaveAttribute(
+    "data-status",
+    "done",
+  )
+  await expect(tree.getByTestId("tree-node").filter({ hasText: "implement" })).toHaveAttribute(
+    "data-status",
+    "running",
+  )
+  await expect(tree.getByText("plan-approval")).toBeVisible()
+  await expect(tree.getByTestId("loop-indicator").filter({ hasText: "2/3" })).toBeVisible()
+})
+
+test("the workflow panel waits for the analyzer, then draws the tree once running", async ({
+  page,
+}) => {
+  await page.goto("/?mock=analyzing")
+
+  await expect(page.getByTestId("tree-pending")).toBeVisible()
+  await expect(page.getByTestId("tree-node")).toHaveCount(0)
+
+  // The stream still works off events alone while the tree is missing.
+  await expect(
+    page.getByTestId("event-row").filter({ hasText: "template selected" }),
+  ).toBeVisible()
+
+  // RunStarted streams in, the run flips to running, and the refetch brings the tree.
+  await expect(page.getByTestId("tree-pending")).toBeHidden()
+  await expect(page.getByTestId("tree-node").filter({ hasText: "explore" })).toBeVisible()
+})
+
+test("a recovered run shows the recovery banner", async ({ page }) => {
+  await page.goto("/?mock=recovery")
+  await expect(page.getByText(/run recovered from checkpoint 4f2a91c/)).toBeVisible()
+})
+
+test("a failed run start surfaces the error and keeps the prompt", async ({ page }) => {
+  const json = (body: unknown) =>
+    ({ status: 200, contentType: "application/json", body: JSON.stringify(body) }) as const
+
+  await page.route("**/api/projects", (route) =>
+    route.fulfill(json([{ id: "p1", name: "demo", repoPath: "~/src/demo" }])),
+  )
+  await page.route("**/api/projects/*/runs", (route) => route.fulfill(json([])))
+  await page.route("**/api/runs", (route) => route.fulfill({ status: 400, body: "bad prompt" }))
+  await page.goto("/")
+
+  const prompt = "Add a retry budget to the transcript writer"
+  await page.getByTestId("prompt-input").fill(prompt)
+  await page.getByTestId("start-run").click()
+
+  await expect(page.getByTestId("start-error")).toContainText("400")
+  await expect(page.getByTestId("prompt-input")).toHaveValue(prompt)
+})
+
+test("selecting a tree node filters the stream to that block and clears again", async ({ page }) => {
+  await page.goto("/?mock=retry")
+  await expect(page.getByTestId("event-row").first()).toBeVisible()
+
+  await page.getByTestId("tree-node").filter({ hasText: "explore" }).click()
+  await expect(page.getByTestId("clear-filter")).toBeVisible()
+
+  // explore owns the ripgrep call; the rspec run belongs to verify and must drop out.
+  await expect(page.getByTestId("event-row").filter({ hasText: "rg -n reconnect" })).toHaveCount(1)
+  await expect(page.getByTestId("event-row").filter({ hasText: "rspec" })).toHaveCount(0)
+  await expect(page.getByTestId("failure-card")).toHaveCount(0)
+
+  await page.getByTestId("clear-filter").click()
+  await expect(page.getByTestId("clear-filter")).toBeHidden()
+  await expect(page.getByTestId("failure-card")).toBeVisible()
+})
+
+test("approval gate renders its plan and clicks through to a decision", async ({ page }) => {
+  await page.goto("/?mock=approval")
+
+  const card = page.getByTestId("approval-card")
+  await expect(card).toBeVisible()
+  await expect(card.getByText("plan-approval").first()).toBeVisible()
+  await expect(card.getByText("persist the transcript cursor on every event")).toBeVisible()
+
+  await expect(card.getByTestId("approve")).toBeEnabled()
+  await card.getByTestId("approve").click()
+
+  await expect(card.getByText("approved — execution resumed")).toBeVisible()
+  await expect(card.getByTestId("approve")).toBeDisabled()
+})
+
+test("failure packet expands to the envelope forwarded to the next attempt", async ({ page }) => {
+  await page.goto("/?mock=retry")
+
+  const failure = page.getByTestId("failure-card")
+  await expect(failure).toBeVisible()
+  await expect(failure.getByText("ATTEMPT FAILED")).toBeVisible()
+  await expect(failure.getByText(/stale cursor/)).toBeVisible()
+
+  await failure.getByTestId("expand-packet").click()
+  await expect(failure.getByText("FEEDBACK PACKET")).toBeVisible()
+  await expect(failure.getByText(/interview_recovery_spec:34/)).toBeVisible()
+})
+
+test("a question row takes an answer", async ({ page }) => {
+  await page.goto("/?mock=question")
+
+  const card = page.getByTestId("question-card")
+  await expect(card).toBeVisible()
+  await expect(card.getByText(/disagree on cursor ownership/)).toBeVisible()
+
+  await card.getByTestId("answer-input").fill("InterviewRecovery owns the write")
+  await card.getByTestId("send-answer").click()
+
+  // The question stays visible next to the answer it received.
+  await expect(card.getByText("ANSWERED", { exact: true })).toBeVisible()
+  await expect(card.getByText("InterviewRecovery owns the write")).toBeVisible()
+  await expect(card.getByText(/disagree on cursor ownership/)).toBeVisible()
+})
+
+test("expanders render ANSI output and a unified diff", async ({ page }) => {
+  await page.goto("/?mock=retry")
+
+  await page.locator('[data-testid=event-row][data-tag=stdout]').first().click()
+  await expect(page.getByTestId("ansi-terminal").first()).toBeVisible()
+
+  await page.getByTestId("event-row").filter({ hasText: ".patch" }).first().click()
+  const diff = page.getByTestId("diff-view").first()
+  await expect(diff).toBeVisible()
+  await expect(diff.getByText(/reload\.cursor/)).toBeVisible()
+})
+
+test("a finished run closes with a summary card", async ({ page }) => {
+  await page.goto("/?mock=finished")
+
+  const summary = page.getByTestId("summary-card")
+  await expect(summary).toBeVisible()
+  await expect(summary.getByText("run finished · succeeded")).toBeVisible()
+  await expect(summary.getByText("VERIFICATION")).toBeVisible()
+})
+
+test("a cancelled run reports cancelled", async ({ page }) => {
+  await page.goto("/?mock=cancelled")
+  await expect(page.getByTestId("summary-card").getByText(/cancelled/)).toBeVisible()
+})
+
+test("the idle state offers a prompt box and recent runs", async ({ page }) => {
+  await page.goto("/?mock=idle")
+
+  await expect(page.getByTestId("idle")).toBeVisible()
+  await expect(page.getByTestId("start-run")).toBeDisabled()
+  await page.getByTestId("prompt-input").fill("Add a retry budget to the transcript writer")
+  await expect(page.getByTestId("start-run")).toBeEnabled()
+})
+
+test("j moves the stream focus with the keyboard", async ({ page }) => {
+  await page.goto("/?mock=finished")
+
+  await expect(page.getByTestId("event-row").first()).toBeVisible()
+  await page.keyboard.press("j")
+  await expect(page.locator("[data-testid=event-row].border-vio")).toHaveCount(1)
+
+  // The first row is the analyzer's template choice; `o` opens its rationale in place.
+  await page.keyboard.press("o")
+  await expect(page.getByTestId("stream").getByText("RATIONALE", { exact: true })).toBeVisible()
+})

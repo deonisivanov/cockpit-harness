@@ -18,7 +18,15 @@ export class ProviderError extends Schema.TaggedError<ProviderError>()("Provider
 }) {}
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
-  op: Schema.Literal("create", "reconcile", "remove", "checkpoint", "rollback", "finalize"),
+  op: Schema.Literal(
+    "create",
+    "reconcile",
+    "resolve",
+    "remove",
+    "checkpoint",
+    "rollback",
+    "finalize",
+  ),
   detail: Schema.String,
 }) {}
 

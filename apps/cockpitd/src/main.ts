@@ -1,9 +1,10 @@
-import { HttpRouter, HttpServer } from "@effect/platform"
+import { HttpServer } from "@effect/platform"
 import { NodeContext, NodeHttpServer, NodeRuntime } from "@effect/platform-node"
-import { coreVersion, DaemonLockLive, KernelLive, RecoveryScanLive } from "@cockpit/core"
+import { coreVersion, DaemonLockLive, PlanningLive, RecoveryScanLive } from "@cockpit/core"
 import { Config, Effect, Layer } from "effect"
 import { createServer } from "node:http"
-import { makeRoutesLayer } from "./router.js"
+import { makeRoutesLayer, serveRoutes } from "./router.js"
+import { RunSupervisorLive } from "./runs.js"
 
 const ServerLive = NodeHttpServer.layerConfig(createServer, {
   port: Config.integer("COCKPIT_PORT").pipe(Config.withDefault(4177)),
@@ -13,13 +14,14 @@ const ServerLive = NodeHttpServer.layerConfig(createServer, {
 const CoreVersionLog = Layer.effectDiscard(Effect.log(`cockpitd core v${coreVersion}`))
 
 const KernelWithRecovery = RecoveryScanLive.pipe(
-  Layer.provideMerge(KernelLive),
+  Layer.provideMerge(RunSupervisorLive),
+  Layer.provideMerge(PlanningLive),
   // Built before anything below it, so a second daemon fails before it opens the journal.
   Layer.provide(DaemonLockLive),
   Layer.provide(NodeContext.layer),
 )
 
-const HttpLive = HttpRouter.Default.serve().pipe(
+const HttpLive = serveRoutes.pipe(
   Layer.provide(makeRoutesLayer()),
   Layer.provide(CoreVersionLog),
   Layer.provide(HttpServer.withLogAddress(ServerLive)),

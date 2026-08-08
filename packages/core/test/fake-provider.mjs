@@ -76,10 +76,28 @@ if (step !== undefined) {
         writeFileSync(name, content)
       }
     }
+    // A headless session that stops to ask: claude surfaces it as an AskUserQuestion tool call,
+    // and a step that asks writes no result, which is what makes the attempt suspend.
+    if (step.question) {
+      emit({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_q",
+              name: "AskUserQuestion",
+              input: { questions: [{ question: step.question }] },
+            },
+          ],
+        },
+      })
+    }
     if (step.stderr) process.stderr.write(step.stderr)
     // Before any result event, so the adapter classifies it as a crash rather than a verdict.
     if (step.exitCode) process.exit(step.exitCode)
-    const text = step.text ?? "done"
+    // Everything after `--` is the prompt, so the last operand is what this call was asked.
+    const text = step.echoPrompt ? argv[argv.length - 1] : (step.text ?? "done")
     emit({ type: "assistant", message: { content: [{ type: "text", text }] } })
     emit(
       claudeFormat

@@ -1,32 +1,10 @@
-import { HttpClient, HttpRouter } from "@effect/platform"
-import { NodeHttpServer } from "@effect/platform-node"
-import { Effect, Layer } from "effect"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import * as NodePath from "node:path"
-import { afterAll, describe, expect, it } from "vitest"
-import { makeRoutesLayer } from "../src/router.js"
+import { Effect } from "effect"
+import { describe, expect, it } from "vitest"
+import { api, json, withApi } from "./harness.js"
 
-const uiDist = mkdtempSync(NodePath.join(tmpdir(), "cockpitd-ui-"))
-writeFileSync(NodePath.join(uiDist, "index.html"), "<html>spa shell</html>")
-mkdirSync(NodePath.join(uiDist, "assets"))
-writeFileSync(NodePath.join(uiDist, "assets", "app.js"), "export const x = 1")
+const get = (path: string) => withApi(() => api.get(path))
 
-afterAll(() => rmSync(uiDist, { recursive: true, force: true }))
-
-const ServeLive = HttpRouter.Default.serve().pipe(Layer.provide(makeRoutesLayer(uiDist)))
-
-const request = (method: "GET" | "POST", path: string) =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
-    const response = yield* (method === "GET" ? client.get(path) : client.post(path))
-    const body = yield* response.text
-    return { status: response.status, headers: response.headers, body }
-  }).pipe(Effect.provide(ServeLive), Effect.provide(NodeHttpServer.layerTest), Effect.runPromise)
-
-const get = (path: string) => request("GET", path)
-
-it("GET /healthz returns 200 with {status: \"ok\"}", async () => {
+it('GET /healthz returns 200 with {status: "ok"}', async () => {
   const { status, body } = await get("/healthz")
   expect(status).toBe(200)
   expect(JSON.parse(body)).toEqual({ status: "ok" })
@@ -78,8 +56,31 @@ describe("static UI serving", () => {
   })
 
   it("returns 404 json for an unmatched POST /api/* path", async () => {
-    const { status, body } = await request("POST", "/api/nonexistent")
+    const { status, body } = await withApi(() => api.post("/api/nonexistent"))
     expect(status).toBe(404)
     expect(JSON.parse(body)).toEqual({ error: "not found" })
   })
+})
+
+it("answers unknown ids and malformed bodies in JSON", async () => {
+  const answers = await withApi(() =>
+    Effect.all({
+      run: api.get("/api/runs/nope"),
+      attempt: api.get("/api/attempts/nope"),
+      artifact: api.get("/api/artifacts/nope"),
+      runs: api.get("/api/projects/nope/runs"),
+      badBody: api.post("/api/projects", { name: "x" }),
+      retry: api.post("/api/runs/nope/retry"),
+    }),
+  )
+
+  expect(answers.run.status).toBe(404)
+  expect(json<{ error: string }>(answers.run).error).toBe("not found")
+  expect(answers.attempt.status).toBe(404)
+  expect(answers.artifact.status).toBe(404)
+  expect(answers.runs.status).toBe(404)
+  expect(answers.badBody.status).toBe(400)
+  expect(json<{ error: string }>(answers.badBody).error).toBe("invalid request")
+  // Re-entering a tree is not built; it says so rather than pretending to have run.
+  expect(answers.retry.status).toBe(501)
 })

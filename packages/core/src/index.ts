@@ -12,6 +12,7 @@ import { PluginCatalogLive } from "./PluginCatalog.js"
 import { ProcessSupervisorLive } from "./ProcessSupervisor.js"
 import { RetryCoordinatorLive } from "./RetryCoordinator.js"
 import { TransformPipelineLive } from "./TransformPipeline.js"
+import { StoreLive } from "./Store.js"
 import { CheckpointServiceLive, WorkspaceManagerLive } from "./Workspace.js"
 import { WorkflowEngineLive } from "./WorkflowEngine.js"
 
@@ -35,6 +36,7 @@ export * from "./PluginCatalog.js"
 export * from "./ProcessSupervisor.js"
 export * from "./Provider.js"
 export * from "./Recovery.js"
+export * from "./Store.js"
 export * from "./RetryCoordinator.js"
 export * from "./templates.js"
 export * from "./TemplateRegistry.js"
@@ -54,6 +56,7 @@ export const KernelLive = Layer.mergeAll(
   CommandRunnerLive,
   ClaudeCodeProviderLive,
   CodexProviderLive,
+  StoreLive,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(JournalLive, ProcessSupervisorLive)),
   Layer.provideMerge(Layer.mergeAll(DbLive, EventBusLive)),

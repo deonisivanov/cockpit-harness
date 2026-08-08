@@ -36,6 +36,10 @@ export interface FakeStep {
   readonly delayMs?: number
   readonly hang?: boolean
   readonly writes?: Readonly<Record<string, string>>
+  /** Asks it as a headless question, then ends the session without writing a result. */
+  readonly question?: string
+  /** Reports the prompt it was called with as its own answer, so a resume can be read back. */
+  readonly echoPrompt?: boolean
   /** Exits with this status before reporting a result, which the adapter reads as a crash. */
   readonly exitCode?: number
   /** Writes the result to this path instead, and leaves $COCKPIT_OUTPUT a symlink to it. */

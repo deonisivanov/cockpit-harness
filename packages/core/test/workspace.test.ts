@@ -343,3 +343,23 @@ it("undoes the checkpoint commit when the journal refuses to record it", async (
   expect(git(result.workspace.path, "rev-parse", "HEAD")).toBe(result.workspace.baseCommit)
   expect(git(result.workspace.path, "status", "--porcelain")).toBe("")
 })
+
+it("resolves a repository root and labels a non-repository as a resolve failure", async () => {
+  const repo = await makeRepo()
+  const outside = await tempDir("cockpit-plain-")
+
+  const result = await runKernel(
+    await tempHome(),
+    Effect.gen(function* () {
+      const manager = yield* WorkspaceManager
+      return {
+        // A path inside the repo still answers with the root a worktree can branch from.
+        nested: yield* Effect.either(manager.resolveRepo(repo.repoPath)),
+        plain: yield* Effect.either(manager.resolveRepo(outside)),
+      }
+    }),
+  )
+
+  expect(result.nested).toMatchObject({ _tag: "Right" })
+  expect(result.plain).toMatchObject({ _tag: "Left", left: { op: "resolve" } })
+})

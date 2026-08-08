@@ -1,1 +1,130 @@
 @import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+/* Tokens transcribed from docs/design-prototype/Cockpit.dc.html (the authoritative visual reference). */
+@theme {
+  --font-sans: "Poppins", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: #08080b;
+  --color-panel: #0b0b0e;
+  --color-head: #0d0d11;
+  --color-surface: #0e0e12;
+  --color-code: #0a0a0d;
+  --color-term: #040406;
+
+  --color-ink: #d6d6de;
+  --color-ink-2: #9a9aa6;
+  --color-ink-3: #64646f;
+  --color-ink-4: #4a4a54;
+  --color-ink-5: #3a3a44;
+
+  --color-vio: #8b8bf5;
+  --color-vio-hi: #a7a7ff;
+  --color-blue: #6d8ef0;
+  --color-blue-hi: #9fb2f5;
+  --color-green: #58a87c;
+  --color-green-hi: #7cc79c;
+  --color-amber: #c99a4a;
+  --color-amber-hi: #d8b878;
+  --color-red: #cf6060;
+  --color-red-hi: #d08585;
+  --color-slate: #6b6b76;
+
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  --animate-ck-pulse: ck-pulse 1.8s ease-in-out infinite;
+  --animate-ck-glow: ck-glow 2.6s ease-in-out infinite;
+  --animate-ck-in: ck-in 0.18s ease-out;
+  --animate-ck-blink: ck-blink 1.05s step-end infinite;
+  --animate-ck-sweep: ck-sweep 2s ease-in-out infinite;
+
+  @keyframes ck-pulse {
+    0%,
+    100% {
+      opacity: 0.35;
+      transform: scale(0.82);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.12);
+    }
+  }
+  @keyframes ck-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgb(201 154 74 / 0);
+    }
+    50% {
+      box-shadow: 0 0 0 3px rgb(201 154 74 / 0.13);
+    }
+  }
+  @keyframes ck-in {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes ck-blink {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes ck-sweep {
+    0% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 0.6;
+    }
+    100% {
+      opacity: 0.25;
+    }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.09);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Shiki emits its own background; the panel provides it here. */
+.shiki,
+.shiki span {
+  background: transparent !important;
+}

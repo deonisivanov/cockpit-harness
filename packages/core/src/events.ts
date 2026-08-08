@@ -149,6 +149,7 @@ export const AncillaryPayload = Schema.Union(
     outputInline: Schema.optional(Schema.Unknown),
   }),
   Schema.TaggedStruct("QuestionAsked", { question: Schema.String }),
+  Schema.TaggedStruct("QuestionAnswered", { answer: Schema.String }),
   Schema.TaggedStruct("ApprovalRequested", { gateId: BlockId, payloadRef: ArtifactId }),
   Schema.TaggedStruct("ApprovalDecided", {
     gateId: BlockId,

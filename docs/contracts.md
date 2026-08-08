@@ -21,7 +21,7 @@ class PreflightError    { reason: "provider-unavailable" | "plugin-missing" | "e
                           | "version-incompatible" | "permission-missing" | "workspace-unsafe"; detail: string }
 class ValidationError   { rule: string; path: string[]; message: string }
 class ProviderError     { kind: "spawn" | "crash" | "parse" | "timeout"; sessionId?: SessionId }
-class WorkspaceError    { op: "create" | "reconcile" | "checkpoint" | "rollback" | "finalize" | "remove"; detail: string }
+class WorkspaceError    { op: "create" | "reconcile" | "resolve" | "checkpoint" | "rollback" | "finalize" | "remove"; detail: string }
 class JournalError      { op: string; detail: string }
 class CartridgeError    { stage: "load" | "validate" | "transform"; detail: string }
 class HerdrError        { op: "connect" | "tab" | "agent"; detail: string }
@@ -215,7 +215,11 @@ type EventPayload =
   | PromptComposed { promptRef: ArtifactId }
   | CommandExecuted { argv; exitCode; stdoutRef; stderrRef; durationMs }
   | ResultProduced { outputRef | outputInline }
-  | QuestionAsked { question; options? } | QuestionAnswered
+  | QuestionAsked { question; options? } | QuestionAnswered { answer }
+      // settled in Phase 6: "waiting" is DERIVED, never stored — a block waits when
+      // QuestionAsked (or ApprovalRequested) has no matching answer/decision event yet;
+      // answering before the attempt parks returns 409 (client retries), never buffers.
+      // The executed tree persists as an artifact of kind "workflow-tree" (no runs column).
   | ErrorRaised { class; signature; message; ref? }
   | ArtifactCreated
   | CheckpointCreated { kind: "success" | "salvage" }
