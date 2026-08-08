@@ -87,6 +87,8 @@ interface BlockDef<I, O> {
   provider?: "claude-code" | "codex"        // agent blocks
   binding?: PluginBinding                    // agent blocks, optional
   promptTemplate?: string                    // agent blocks; rendered with input + failure packet
+  promptFile?: string                        // agent blocks; path inside .cockpit, read into promptTemplate
+                                             // at load (§11) — mutually exclusive with it
   command?: { argv: string[]; env?: Record<string, string>; successRules?: OutputRule[] }  // command blocks
   finalizeMode?: "squash" | "ordered"         // workspace blocks; default "squash"
   sessionPolicy: "fresh" | "continue"        // default "fresh" (ADR-004)
@@ -282,6 +284,24 @@ export default defineCartridge({
 ```
 
 `defineCartridge` returns the config Schema-validated at load; all types are exported so the cartridge compiles under the project's own `tsc`. Everything is data + pure functions; cartridge code performs no IO at load time. That rule is upheld by review, not by the runtime — cartridge code runs with the daemon's own privileges (ADR-007), and the loader timeout only catches a load that stalls asynchronously, not synchronous IO or CPU.
+
+**A cartridge is a directory, not a file.** `cockpit.config.ts` is assembly — imports and the `defineCartridge` call — and everything it names lives in its own module:
+
+```
+.cockpit/
+  cockpit.config.ts     # assembly only
+  README.md             # what this cartridge does, how to run a task against this repo
+  blocks/               # one file per block
+  prompts/              # agent prompts as Markdown, referenced by promptFile
+  templates/            # one file per workflow template
+  transforms.ts  validators.ts  policies.ts
+  tsconfig.json
+```
+
+The layout is a convention, not a schema: the loader evaluates `cockpit.config.ts` and follows its imports wherever they lead.
+
+- **The hash covers the directory**, not the entry file: every file under `.cockpit`, sorted, `node_modules` excluded (the kit is linked in there, and an installed tree would put a package manifest in every run's digest). Not an extension allowlist — a prompt is as often `.md` as `.txt`, and a helper as often `.mjs` as `.ts`. An edited prompt therefore moves the hash and invalidates the cached cartridge exactly like an edited block. Each entry is digested with its path and its byte length, so no arrangement of names and contents lets two different cartridges hash alike. Anything imported from outside `.cockpit` is still neither hashed nor watched, and the cached cartridge is marked current only for a directory nothing wrote to while it was being read.
+- **`BlockDef.promptFile`** names a path relative to `.cockpit`; the loader reads it into `promptTemplate` after Schema validation and drops the reference, so the engine sees an ordinary block. Core does the IO, not the cartridge — the no-IO rule above holds. A path that names a missing file, or that escapes `.cockpit` either literally or through a symlink, fails the load as `CartridgeError{stage:"validate"}`; declaring both `promptFile` and `promptTemplate` is refused by the Schema, in the kit and at the daemon boundary alike.
 
 ## 12. Task brief (canonical continuation session seed)
 

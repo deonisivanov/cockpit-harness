@@ -1,5 +1,5 @@
-import { Effect, Either, Schedule } from "effect"
-import { mkdir, writeFile } from "node:fs/promises"
+import { Effect, Either, Fiber, Schedule } from "effect"
+import { mkdir, symlink, writeFile } from "node:fs/promises"
 import * as NodePath from "node:path"
 import { expect, it } from "vitest"
 import {
@@ -23,6 +23,28 @@ const validConfig = (name: string) => `export default {
 }
 `
 
+const promptBlock = (patch: Readonly<Record<string, string>>) => `export default {
+  name: "prompt-file",
+  blocks: [
+    {
+      id: "prompt-block",
+      kind: "agent",
+      title: "Read the prompt from the file it names",
+      input: [],
+      output: [],
+      sessionPolicy: "fresh",
+      retryPolicy: "single-attempt",
+      timeoutMs: 1000,
+      permissionProfile: "workspace-write",
+      workspaceAccess: "write",
+      successCriteria: [],
+      fallback: { _tag: "Fail" },
+      ...${JSON.stringify(patch)},
+    },
+  ],
+}
+`
+
 const writeCartridge = async (source: string) => {
   const repoPath = await tempDir("cockpit-cartridge-")
   const dir = NodePath.join(repoPath, ".cockpit")
@@ -36,6 +58,14 @@ const load = async (repoPath: string) =>
   runPlanning(
     await tempHome(),
     Effect.flatMap(CartridgeLoader, (loader) => Effect.either(loader.load(repoPath))),
+  )
+
+// The watcher only marks the path stale, so a reload lands on the next access — polled rather than
+// slept on, so a slow file-system event waits instead of failing.
+const until = <A>(load: Effect.Effect<A, CartridgeError>, ready: (entry: A) => boolean) =>
+  Effect.retry(
+    Effect.filterOrFail(load, ready, () => "not yet" as const),
+    Schedule.spaced("50 millis").pipe(Schedule.intersect(Schedule.recurs(100))),
   )
 
 const errorOf = <A>(result: Either.Either<A, CartridgeError>) => {
@@ -93,16 +123,7 @@ it("serves the cached cartridge until the file changes, then reloads it", async 
       const cached = yield* loader.load(repoPath)
 
       yield* Effect.promise(() => writeFile(path, validConfig("after")))
-      // The watcher only marks the path stale, so the reload lands on the next access — polled
-      // rather than slept on, so a slow file-system event waits instead of failing.
-      const reloaded = yield* Effect.retry(
-        Effect.filterOrFail(
-          loader.load(repoPath),
-          (entry) => entry.config.name === "after",
-          () => "not yet" as const,
-        ),
-        Schedule.spaced("50 millis").pipe(Schedule.intersect(Schedule.recurs(100))),
-      )
+      const reloaded = yield* until(loader.load(repoPath), (entry) => entry.config.name === "after")
 
       return [first.config.name, cached.config.name, reloaded.config.name, first.hash, reloaded.hash]
     }),
@@ -127,14 +148,7 @@ it("hashes every source in the cartridge directory and reloads when a sibling ch
       const first = yield* loader.load(repoPath)
 
       yield* Effect.promise(() => writeFile(sibling, `export const name = "after"\n`))
-      const reloaded = yield* Effect.retry(
-        Effect.filterOrFail(
-          loader.load(repoPath),
-          (entry) => entry.config.name === "after",
-          () => "not yet" as const,
-        ),
-        Schedule.spaced("50 millis").pipe(Schedule.intersect(Schedule.recurs(100))),
-      )
+      const reloaded = yield* until(loader.load(repoPath), (entry) => entry.config.name === "after")
       return [first, reloaded]
     }),
   )
@@ -142,6 +156,117 @@ it("hashes every source in the cartridge directory and reloads when a sibling ch
   expect(first.config.name).toBe("before")
   expect(first.hash).not.toBe(reloaded.hash)
 }, 30_000)
+
+it("reloads after an edit that lands while the cartridge is still loading", async () => {
+  // The window is between reading the directory and recording that the cartridge is current; a
+  // cartridge that takes its time widens it enough to write into.
+  const { repoPath, path } = await writeCartridge(
+    `await new Promise((resolve) => setTimeout(resolve, 300))\n${validConfig("before")}`,
+  )
+
+  const [first, next] = await runPlanning(
+    await tempHome(),
+    Effect.gen(function* () {
+      const loader = yield* CartridgeLoader
+      const loading = yield* Effect.fork(loader.load(repoPath))
+      yield* Effect.sleep("100 millis")
+      yield* Effect.promise(() => writeFile(path, validConfig("after")))
+      const first = yield* Fiber.join(loading)
+
+      const next = yield* until(loader.load(repoPath), (entry) => entry.config.name === "after")
+      return [first, next]
+    }),
+  )
+
+  expect(first.config.name).toBe("before")
+  expect(next.config.name).toBe("after")
+}, 30_000)
+
+it("refuses a prompt file that leaves the cartridge through a symlink", async () => {
+  const { repoPath, path } = await writeCartridge(promptBlock({ promptFile: "./prompts/task.md" }))
+  const outside = NodePath.join(repoPath, "elsewhere.md")
+  await writeFile(outside, "Read from somewhere the hash never covers.\n")
+  await mkdir(NodePath.join(NodePath.dirname(path), "prompts"), { recursive: true })
+  await symlink(outside, NodePath.join(NodePath.dirname(path), "prompts", "task.md"))
+
+  const failure = errorOf(await load(repoPath))
+
+  expect(failure.stage).toBe("validate")
+  expect(failure.detail).toContain("escapes .cockpit")
+})
+
+it("cannot be made to hash two different cartridges the same", async () => {
+  // Unmeasured, path and content run together: an `a.ts` holding "b.tsX" digests the same bytes as
+  // an empty `a.ts` beside a `b.ts` holding "X".
+  const [run, split] = await Promise.all([0, 1].map(() => writeCartridge(validConfig("collide"))))
+  await writeFile(NodePath.join(NodePath.dirname(run.path), "a.ts"), "b.tsX")
+  await writeFile(NodePath.join(NodePath.dirname(split.path), "a.ts"), "")
+  await writeFile(NodePath.join(NodePath.dirname(split.path), "b.ts"), "X")
+
+  const hashes = await Promise.all(
+    [run, split].map(async (entry) => valueOf(await load(entry.repoPath)).hash),
+  )
+
+  expect(hashes[0]).not.toBe(hashes[1])
+})
+
+it("leaves the cartridge's own node_modules out of the hash", async () => {
+  const bare = await writeCartridge(validConfig("linked"))
+  const installed = await writeCartridge(validConfig("linked"))
+  const kit = NodePath.join(NodePath.dirname(installed.path), "node_modules", "kit")
+  await mkdir(kit, { recursive: true })
+  await writeFile(NodePath.join(kit, "index.ts"), `export const version = "1"\n`)
+
+  expect(valueOf(await load(installed.repoPath)).hash).toBe(valueOf(await load(bare.repoPath)).hash)
+})
+
+it("reads a block's prompt from the file it names, and reloads when that file changes", async () => {
+  const { repoPath, path } = await writeCartridge(promptBlock({ promptFile: "./prompts/task.md" }))
+  const prompt = NodePath.join(NodePath.dirname(path), "prompts", "task.md")
+  await mkdir(NodePath.dirname(prompt), { recursive: true })
+  await writeFile(prompt, "Do the work.\n")
+
+  const [first, rewritten] = await runPlanning(
+    await tempHome(),
+    Effect.gen(function* () {
+      const loader = yield* CartridgeLoader
+      const first = yield* loader.load(repoPath)
+
+      yield* Effect.promise(() => writeFile(prompt, "Do it differently.\n"))
+      const rewritten = yield* until(
+        loader.load(repoPath),
+        (entry) => entry.config.blocks?.[0]?.promptTemplate === "Do it differently.\n",
+      )
+      return [first, rewritten]
+    }),
+  )
+
+  expect(first.config.blocks?.[0]?.promptTemplate).toBe("Do the work.\n")
+  expect(first.config.blocks?.[0]?.promptFile).toBeUndefined()
+  expect(first.hash).not.toBe(rewritten.hash)
+}, 30_000)
+
+it("rejects a prompt file that is missing, escapes the cartridge, or doubles an inline one", async () => {
+  const cartridges = await Promise.all(
+    [
+      promptBlock({ promptFile: "./prompts/gone.md" }),
+      promptBlock({ promptFile: "../outside.md" }),
+      promptBlock({ promptFile: "/etc/hosts" }),
+      promptBlock({ promptFile: "./prompts/task.md", promptTemplate: "inline" }),
+    ].map(writeCartridge),
+  )
+  const [missing, escaping, absolute, both] = await Promise.all(
+    cartridges.map(async ({ repoPath }) => errorOf(await load(repoPath))),
+  )
+
+  expect(missing.stage).toBe("validate")
+  expect(missing.detail).toContain("prompts/gone.md")
+  expect(escaping.stage).toBe("validate")
+  expect(escaping.detail).toContain("escapes .cockpit")
+  expect(absolute.detail).toContain("escapes .cockpit")
+  expect(both.stage).toBe("validate")
+  expect(both.detail).toContain("not both")
+})
 
 it("loads the sample cartridge a project author would write against the kit", async () => {
   const { config } = valueOf(await load(fixturePath("fixtures/sample-cartridge")))
@@ -151,6 +276,9 @@ it("loads the sample cartridge a project author would write against the kit", as
   expect(typeof config.transforms?.[0]?.apply).toBe("function")
   expect(config.templates?.[0]?.id).toBe("lint-fix")
   expect(config.rules).toMatchObject({ language: "English" })
+
+  expect(config.blocks?.map((block) => block.id)).toEqual(["sample-lint", "sample-implement"])
+  expect(config.blocks?.[1]?.promptTemplate).toContain("Fix every lint failure")
 
   // The validator crosses the load boundary as a working function, not just a name: it passes the
   // cartridge's own single-loop template and refuses the same tree wrapped in a second loop.

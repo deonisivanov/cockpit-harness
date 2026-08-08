@@ -87,6 +87,8 @@ export const BlockDef = Schema.Struct({
   provider: Schema.optional(ProviderName),
   binding: Schema.optional(PluginBinding),
   promptTemplate: Schema.optional(Schema.String),
+  /** Agent blocks; a path inside `.cockpit` the loader reads into `promptTemplate` (contracts §11). */
+  promptFile: Schema.optional(Schema.String),
   command: Schema.optional(CommandSpec),
   /** Workspace blocks only, like `command` for command blocks and `provider` for agent ones. */
   finalizeMode: Schema.optional(FinalizeMode),
@@ -100,7 +102,15 @@ export const BlockDef = Schema.Struct({
   ),
   successCriteria: Schema.Array(SuccessCriterion),
   fallback: Fallback,
-})
+}).pipe(
+  // Both set is not a merge but a question the loader would have to answer by guessing.
+  Schema.filter(
+    (block) =>
+      block.promptTemplate === undefined ||
+      block.promptFile === undefined ||
+      "a block declares promptTemplate or promptFile, not both",
+  ),
+)
 export type BlockDef = typeof BlockDef.Type
 
 export const RetryPolicy = Schema.Struct({
