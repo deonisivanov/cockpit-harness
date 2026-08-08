@@ -111,6 +111,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Browsers don't default these to a pointer cursor; every interactive element in this app is one of them. */
+button:not(:disabled),
+[role="button"],
+select,
+summary {
+  cursor: pointer;
+}
+
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;

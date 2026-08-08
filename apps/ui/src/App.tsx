@@ -19,7 +19,7 @@ import { attemptsOf, currentBlockId, useEventStore } from "./store.js"
 import { Tree } from "./Tree.js"
 import { flattenTree, maxAttemptsByBlock } from "./treeModel.js"
 
-type ActionScope = "gate" | "question" | "run" | "start" | "terminal"
+type ActionScope = "gate" | "question" | "run" | "start" | "terminal" | "project"
 
 const STATUS_TONE: Record<RunStatus, string> = {
   created: "border-blue/25 bg-blue/8 text-blue",
@@ -40,6 +40,8 @@ export default function App() {
   const { source, mock } = useMemo(pickSource, [])
   const [insightsOpen, setInsightsOpen] = useState(mock === "insights")
   const [projects, setProjects] = useState<readonly Project[]>([])
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [runs, setRuns] = useState<readonly Run[]>([])
   const [runId, setRunId] = useState<string | null>(null)
   const [detail, setDetail] = useState<RunDetail | null>(null)
@@ -58,7 +60,7 @@ export default function App() {
   const { state, answered, decided } = useEventStore(source, runId)
   const pending = useRef(state.questions)
   pending.current = state.questions
-  const project = projects[0] ?? null
+  const project = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null
   const narrow = width < 1280
   const tiny = width < 1024
 
@@ -200,6 +202,19 @@ export default function App() {
     })
   }, [act, source, project, prompt])
 
+  const addProject = useCallback(
+    (name: string, repoPath: string) => {
+      void act("project", async () => {
+        const created = await source.createProject(name, repoPath)
+        setProjects((prev) => [...prev, created])
+        setSelectedProjectId(created.id)
+        setAddProjectOpen(false)
+        setRunId(null)
+      })
+    },
+    [act, source],
+  )
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -301,6 +316,14 @@ export default function App() {
           activity={activity}
           insightsOpen={insightsOpen}
           onInsights={() => setInsightsOpen((v) => !v)}
+          addProjectOpen={addProjectOpen}
+          onToggleAddProject={() => {
+            setAddProjectOpen((v) => !v)
+            setError((e) => (e?.scope === "project" ? null : e))
+          }}
+          onAddProject={addProject}
+          addProjectBusy={busy}
+          addProjectError={error?.scope === "project" ? error.message : null}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
@@ -428,6 +451,7 @@ export default function App() {
             ) : (
               <IdleScreen
                 projectName={project?.name ?? "no project"}
+                hasProject={!!project}
                 prompt={prompt}
                 onPrompt={setPrompt}
                 onStart={startRun}
@@ -452,6 +476,7 @@ export default function App() {
 
 function IdleScreen({
   projectName,
+  hasProject,
   prompt,
   onPrompt,
   onStart,
@@ -461,6 +486,7 @@ function IdleScreen({
   onSelect,
 }: {
   projectName: string
+  hasProject: boolean
   prompt: string
   onPrompt: (v: string) => void
   onStart: () => void
@@ -496,7 +522,7 @@ function IdleScreen({
           <button
             type="button"
             data-testid="start-run"
-            disabled={busy || !prompt.trim()}
+            disabled={busy || !prompt.trim() || !hasProject}
             onClick={onStart}
             className="rounded-md border border-vio/35 bg-vio/11 px-3.5 py-1.5 font-mono text-[11.5px] font-medium text-vio-hi hover:bg-vio/20 disabled:opacity-40"
           >

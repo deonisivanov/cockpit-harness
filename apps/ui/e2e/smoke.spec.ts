@@ -19,6 +19,11 @@ test("boots with three panels and a populated stream", async ({ page }) => {
   await expect(page.getByTestId("attempt-header").first()).toBeVisible()
 })
 
+test("interactive buttons render with a pointer cursor", async ({ page }) => {
+  await page.goto("/?mock=running")
+  await expect(page.getByTestId("cancel-run")).toHaveCSS("cursor", "pointer")
+})
+
 test("tree shows block statuses, the gate and the loop indicator", async ({ page }) => {
   await page.goto("/?mock=retry")
 
@@ -75,6 +80,55 @@ test("a failed run start surfaces the error and keeps the prompt", async ({ page
 
   await expect(page.getByTestId("start-error")).toContainText("400")
   await expect(page.getByTestId("prompt-input")).toHaveValue(prompt)
+})
+
+test("the empty rail state registers a project and selects it", async ({ page }) => {
+  const json = (body: unknown, status = 200) =>
+    ({ status, contentType: "application/json", body: JSON.stringify(body) }) as const
+
+  let projects: { id: string; name: string; repoPath: string }[] = []
+  await page.route("**/api/projects", (route) => {
+    if (route.request().method() !== "POST") return route.fulfill(json(projects))
+    const created = { id: "p_new", name: "demo", repoPath: "/Users/you/demo" }
+    projects = [...projects, created]
+    return route.fulfill(json(created, 201))
+  })
+  await page.route("**/api/projects/*/runs", (route) => route.fulfill(json([])))
+  await page.goto("/")
+
+  await expect(page.getByTestId("rail").getByText("register a git repository to start")).toBeVisible()
+  const form = page.getByTestId("add-project-form")
+  await expect(form).toBeVisible()
+
+  await form.getByTestId("add-project-name").fill("demo")
+  await form.getByTestId("add-project-path").fill("/Users/you/demo")
+  await form.getByTestId("add-project-submit").click()
+
+  await expect(page.getByTestId("rail").getByText("demo")).toBeVisible()
+  await expect(page.getByTestId("add-project-form")).toBeHidden()
+})
+
+test("a 400 from project registration shows inline and keeps the typed values", async ({ page }) => {
+  const json = (body: unknown, status = 200) =>
+    ({ status, contentType: "application/json", body: JSON.stringify(body) }) as const
+
+  await page.route("**/api/projects", (route) => {
+    if (route.request().method() !== "POST")
+      return route.fulfill(json([{ id: "p1", name: "demo", repoPath: "~/src/demo" }]))
+    return route.fulfill(json({ error: "not a git repository", detail: "/tmp is not a repo" }, 400))
+  })
+  await page.route("**/api/projects/*/runs", (route) => route.fulfill(json([])))
+  await page.goto("/")
+
+  await page.getByTestId("add-project-toggle").click()
+  const form = page.getByTestId("add-project-form")
+  await form.getByTestId("add-project-name").fill("bad")
+  await form.getByTestId("add-project-path").fill("/tmp")
+  await form.getByTestId("add-project-submit").click()
+
+  await expect(form.getByTestId("add-project-error")).toContainText("not a git repository")
+  await expect(form.getByTestId("add-project-name")).toHaveValue("bad")
+  await expect(form.getByTestId("add-project-path")).toHaveValue("/tmp")
 })
 
 test("selecting a tree node filters the stream to that block and clears again", async ({ page }) => {

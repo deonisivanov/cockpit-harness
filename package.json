@@ -10,7 +10,8 @@
     "build": "pnpm -r build",
     "lint": "eslint .",
     "test": "pnpm -r test",
-    "start": "pnpm -r build && node apps/cockpitd/dist/main.js"
+    "start": "pnpm -r build && node apps/cockpitd/dist/main.js",
+    "cockpit": "node apps/cockpitd/dist/cli.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

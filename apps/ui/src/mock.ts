@@ -598,9 +598,15 @@ export function mockSource(state: MockState): Source {
   }
   // Analyzing starts before planning settles: the first fetch has no tree, the refetch does.
   let planningSettled = state !== "analyzing"
+  let projects = PROJECTS
 
   return {
-    projects: async () => PROJECTS,
+    projects: async () => projects,
+    createProject: async (name, repoPath) => {
+      const created = { id: `prj_${name}`, name, repoPath }
+      projects = [...projects, created]
+      return created
+    },
     runs: async () => (state === "idle" ? siblings.slice(1) : siblings),
     run: async () => {
       if (!planningSettled) {

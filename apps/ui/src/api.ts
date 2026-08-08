@@ -12,6 +12,7 @@ import type { EventSource } from "./store.js"
 
 export interface Source extends EventSource {
   projects(): Promise<readonly Project[]>
+  createProject(name: string, repoPath: string): Promise<Project>
   runs(projectId: string): Promise<readonly Run[]>
   run(runId: string): Promise<RunDetail>
   createRun(projectId: string, prompt: string): Promise<{ runId: string }>
@@ -64,6 +65,7 @@ const OVERSIZE = "artifact too large to preview (over 1 MiB) — open it from th
 
 export const httpSource: Source = {
   projects: () => json<readonly Project[]>("/projects"),
+  createProject: (name, repoPath) => post<Project>("/projects", { name, repoPath }),
   runs: (projectId) => json<readonly Run[]>(`/projects/${projectId}/runs`),
   run: (runId) => json<RunDetail>(`/runs/${runId}`),
   createRun: (projectId, prompt) => post<{ runId: string }>("/runs", { projectId, prompt }),

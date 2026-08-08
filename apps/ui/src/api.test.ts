@@ -50,6 +50,33 @@ describe("artifact", () => {
   })
 })
 
+describe("createProject", () => {
+  it("posts the name and repoPath and resolves the created project row", async () => {
+    const row = { id: "prj_1", name: "demo", repoPath: "/Users/you/demo" }
+    const calls = stubFetch((_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ name: "demo", repoPath: "/Users/you/demo" })
+      return new Response(JSON.stringify(row), { headers: { "content-type": "application/json" } })
+    })
+
+    await expect(httpSource.createProject("demo", "/Users/you/demo")).resolves.toEqual(row)
+    expect(calls).toEqual(["/api/projects"])
+  })
+
+  it("propagates a 400 with the not-a-git-repository detail", async () => {
+    stubFetch(
+      () =>
+        new Response(JSON.stringify({ error: "not a git repository", detail: "/x has no .git" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    )
+
+    await expect(httpSource.createProject("demo", "/x")).rejects.toThrow(
+      /not a git repository: \/x has no \.git/,
+    )
+  })
+})
+
 describe("answer", () => {
   it("retries a 409 raised while the attempt is still parking", async () => {
     let n = 0

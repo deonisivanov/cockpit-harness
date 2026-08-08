@@ -1,3 +1,4 @@
+import { useState } from "react"
 import type { Project, Run, RunStatus } from "./model.js"
 import { relativeTime } from "./presentation.js"
 
@@ -22,6 +23,11 @@ export interface RailProps {
   readonly activity: readonly { text: string; tone: string }[]
   readonly insightsOpen: boolean
   readonly onInsights: () => void
+  readonly addProjectOpen: boolean
+  readonly onToggleAddProject: () => void
+  readonly onAddProject: (name: string, repoPath: string) => void
+  readonly addProjectBusy: boolean
+  readonly addProjectError: string | null
 }
 
 export function Rail({
@@ -36,6 +42,11 @@ export function Rail({
   activity,
   insightsOpen,
   onInsights,
+  addProjectOpen,
+  onToggleAddProject,
+  onAddProject,
+  addProjectBusy,
+  addProjectError,
 }: RailProps) {
   const badged = (r: Run) => (r.id === selectedRunId && badge ? badge : null)
   const ordered = [...runs].sort((a, b) => (badged(b) ? 1 : 0) - (badged(a) ? 1 : 0))
@@ -96,13 +107,40 @@ export function Rail({
       {expanded && (
         <>
           <div className="flex items-center gap-1.5 px-3 pb-2.5">
-            <div className="flex flex-1 items-center justify-between rounded-md border border-white/7 bg-[#101014] px-2.5 py-[7px] hover:border-white/14">
-              <span className="truncate font-sans text-[12.5px] font-medium text-[#c4c4ce]">
-                {project?.name ?? "no project"}
-              </span>
-              <span className="font-mono text-[9px] text-ink-4">▼</span>
-            </div>
+            {project ? (
+              <>
+                <div className="flex flex-1 items-center justify-between rounded-md border border-white/7 bg-[#101014] px-2.5 py-[7px] hover:border-white/14">
+                  <span className="truncate font-sans text-[12.5px] font-medium text-[#c4c4ce]">
+                    {project.name}
+                  </span>
+                  <span className="font-mono text-[9px] text-ink-4">▼</span>
+                </div>
+                <button
+                  type="button"
+                  data-testid="add-project-toggle"
+                  title="add project"
+                  aria-label="add project"
+                  aria-expanded={addProjectOpen}
+                  onClick={onToggleAddProject}
+                  className={`flex-none rounded-md border px-2 py-[7px] font-mono text-[11px] ${
+                    addProjectOpen
+                      ? "border-vio/40 bg-vio/10 text-vio-hi"
+                      : "border-white/7 text-ink-4 hover:border-vio/40 hover:text-vio-hi"
+                  }`}
+                >
+                  +
+                </button>
+              </>
+            ) : (
+              <div className="font-sans text-[12px] text-[#8a8a96]">
+                register a git repository to start
+              </div>
+            )}
           </div>
+
+          {(addProjectOpen || !project) && (
+            <AddProjectForm onSubmit={onAddProject} busy={addProjectBusy} error={addProjectError} />
+          )}
 
           <div className="flex gap-3 px-3.5 pt-0.5 pb-2.5 font-sans text-[10.5px] font-medium">
             <span className="text-[#7b93f2]">● {counts.running} running</span>
@@ -181,5 +219,57 @@ export function Rail({
         </>
       )}
     </aside>
+  )
+}
+
+function AddProjectForm({
+  onSubmit,
+  busy,
+  error,
+}: {
+  onSubmit: (name: string, repoPath: string) => void
+  busy: boolean
+  error: string | null
+}) {
+  const [name, setName] = useState("")
+  const [repoPath, setRepoPath] = useState("")
+
+  return (
+    <form
+      data-testid="add-project-form"
+      className="mx-3 mb-2.5 flex flex-col gap-1.5 rounded-md border border-white/8 bg-[#101014] p-2.5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (name.trim() && repoPath.trim()) onSubmit(name.trim(), repoPath.trim())
+      }}
+    >
+      <input
+        data-testid="add-project-name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="name"
+        className="rounded-sm border border-white/8 bg-[#0a0a0d] px-2 py-1.5 font-sans text-[12px] text-[#c9c9d4] outline-none placeholder:text-[#5c5c67] focus:border-vio/40"
+      />
+      <input
+        data-testid="add-project-path"
+        value={repoPath}
+        onChange={(e) => setRepoPath(e.target.value)}
+        placeholder="/Users/you/path/to/repo"
+        className="rounded-sm border border-white/8 bg-[#0a0a0d] px-2 py-1.5 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#5c5c67] focus:border-vio/40"
+      />
+      <button
+        type="submit"
+        data-testid="add-project-submit"
+        disabled={busy || !name.trim() || !repoPath.trim()}
+        className="rounded-sm border border-vio/35 bg-vio/11 px-2.5 py-1.5 font-sans text-[11.5px] font-medium text-vio-hi hover:bg-vio/20 disabled:opacity-40"
+      >
+        Register project
+      </button>
+      {error && (
+        <div data-testid="add-project-error" role="alert" className="font-sans text-[11px] text-red">
+          {error}
+        </div>
+      )}
+    </form>
   )
 }

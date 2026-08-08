@@ -44,6 +44,11 @@ describe("Rail", () => {
         onInsights={() => {}}
         badge={null}
         activity={[]}
+        addProjectOpen={false}
+        onToggleAddProject={() => {}}
+        onAddProject={() => {}}
+        addProjectBusy={false}
+        addProjectError={null}
         {...props}
       />,
     )
@@ -74,6 +79,24 @@ describe("Rail", () => {
     const html = render({ expanded: false })
     expect(html).not.toContain("ai-interview-assistant")
     expect(html).toContain("w-[54px]")
+  })
+
+  it("shows the register hint and the form instead of a dead dropdown when there is no project", () => {
+    const html = render({ project: null })
+    expect(html).toContain("register a git repository to start")
+    expect(html).toContain('data-testid="add-project-form"')
+    expect(html).not.toContain('data-testid="add-project-toggle"')
+  })
+
+  it("disables the register button until both fields are filled", () => {
+    const html = render({ project: null })
+    expect(html).toMatch(/data-testid="add-project-submit"[^>]*disabled=""/)
+  })
+
+  it("keeps the add-project form collapsed behind a toggle when a project is selected", () => {
+    const html = render()
+    expect(html).toContain('data-testid="add-project-toggle"')
+    expect(html).not.toContain('data-testid="add-project-form"')
   })
 })
 

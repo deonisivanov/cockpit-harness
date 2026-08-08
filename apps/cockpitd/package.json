@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "main": "dist/main.js",
+  "bin": {
+    "cockpit": "./dist/cli.js"
+  },
   "scripts": {
-    "build": "tsc -b tsconfig.json",
+    "build": "tsc -b tsconfig.json && chmod +x dist/cli.js",
     "start": "node dist/main.js",
     "test": "tsc -b tsconfig.json && tsc -p tsconfig.test.json && vitest run"
   },
