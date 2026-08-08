@@ -19,9 +19,8 @@ export const recoverInterruptedRuns = Effect.gen(function* () {
       const runId = RunId.make(id)
 
       const attempts = yield* sql<{ id: string; block_id: string }>`
-        SELECT a.id, a.block_id FROM attempts a
-        JOIN blocks b ON b.id = a.block_id
-        WHERE b.run_id = ${runId} AND a.verdict IS NULL`
+        SELECT id, block_id FROM attempts
+        WHERE run_id = ${runId} AND verdict IS NULL`
       yield* Effect.forEach(
         attempts,
         (attempt) =>

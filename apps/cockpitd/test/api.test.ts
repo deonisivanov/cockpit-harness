@@ -86,7 +86,7 @@ it(
         )
         const found = yield* events(runId)
         const blocks = yield* Effect.map(
-          client.get(`/api/blocks/implement/attempts`),
+          client.get(`/api/runs/${runId}/blocks/implement/attempts`),
           json<ReadonlyArray<{ id: string; verdict: string }>>,
         )
         const attempt = yield* Effect.map(
@@ -221,4 +221,49 @@ it(
     expect(result.again.status).toBe(409)
   },
   2 * minutes,
+)
+
+it(
+  "runs the same template twice in one journal, since a block id belongs to its run",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+
+        const first = yield* startRun(client, project.id, "rename the parser field")
+        yield* waitFor(first.runId, finished)
+        const second = yield* startRun(client, project.id, "rename it back")
+        yield* waitFor(second.runId, finished)
+
+        const status = (runId: string) =>
+          Effect.map(client.get(`/api/runs/${runId}`), (response) => json<{ run: RunRow }>(response).run.status)
+        const attempts = (runId: string) =>
+          Effect.map(
+            client.get(`/api/runs/${runId}/blocks/implement/attempts`),
+            json<ReadonlyArray<{ id: string; blockId: string }>>,
+          )
+
+        return {
+          first: yield* status(first.runId),
+          second: yield* status(second.runId),
+          firstAttempts: yield* attempts(first.runId),
+          secondAttempts: yield* attempts(second.runId),
+        }
+      }),
+    )
+
+    expect([result.first, result.second]).toEqual(["succeeded", "succeeded"])
+    // Each run's `implement` has its own attempts; the route scopes them or they would be shared.
+    expect(result.firstAttempts).toHaveLength(1)
+    expect(result.secondAttempts).toHaveLength(1)
+    expect(result.firstAttempts[0].id).not.toBe(result.secondAttempts[0].id)
+  },
+  4 * minutes,
 )

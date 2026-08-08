@@ -141,7 +141,8 @@ it("instantiates the chosen template from a valid decision", async () => {
   expect(analyzed.tree.templateId).toBe("task")
 
   // The toggled-off block is gone, and the block that read it no longer names it as a source.
-  expect(ids(analyzed.tree.root)).toEqual(["plan", "implement", "verify"])
+  // `finalize` stays: it defaults on, and this decision does not toggle it off.
+  expect(ids(analyzed.tree.root)).toEqual(["plan", "implement", "verify", "finalize"])
   const plan = blocksIn(analyzed.tree.root).find((block) => block.id === "plan")
   expect(plan?.inputs ?? []).toEqual([])
 

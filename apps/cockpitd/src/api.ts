@@ -6,9 +6,11 @@ import {
   ContinuationService,
   EventBus,
   EventSeq,
+  InsightTarget,
   Journal,
   JournalEvent,
   outputBudget,
+  RetrospectiveService,
   RetryPolicy,
   RunId,
   Store,
@@ -234,16 +236,57 @@ const openTerminal = Effect.gen(function* () {
     : yield* problem(500, "internal error", opened.left.detail)
 })
 
+/** Plan §12: a retrospective judges a run that is over, so a live one is refused rather than read. */
+const runRetrospective = Effect.gen(function* () {
+  const store = yield* Store
+  const retrospectives = yield* RetrospectiveService
+  const runId = RunId.make(yield* pathParam("id"))
+  const run = yield* store.run(runId)
+  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+  if (run.status === "created" || run.status === "running") {
+    return yield* problem(409, "run has not finished", `run ${runId} is ${run.status}`)
+  }
+  const analyzed = yield* Effect.either(retrospectives.analyze(runId))
+  return analyzed._tag === "Left"
+    ? yield* problem(502, "the retrospective produced no insights", detailOf(analyzed.left))
+    : yield* ok({ insights: analyzed.right })
+})
+
+const listInsights = Effect.gen(function* () {
+  const search = yield* HttpServerRequest.ParsedSearchParams
+  const retrospectives = yield* RetrospectiveService
+  const target = single(search.target)
+  if (target !== undefined && !InsightTarget.literals.includes(target as InsightTarget)) {
+    return yield* problem(400, "invalid request", `target must be one of ${InsightTarget.literals.join(", ")}`)
+  }
+  return yield* ok(
+    yield* retrospectives.insights({
+      target: target as InsightTarget | undefined,
+      limit: intParam(search.limit, defaultPageSize, maxPageSize),
+      offset: intParam(search.offset, 0),
+    }),
+  )
+})
+
+const getInsight = Effect.gen(function* () {
+  const retrospectives = yield* RetrospectiveService
+  const id = yield* pathParam("id")
+  const found = yield* retrospectives.insight(id)
+  return found === undefined ? yield* problem(404, "not found", `insight ${id}`) : yield* ok(found)
+})
+
 const retryRun = problem(
   501,
   "not implemented",
   "re-entering a tree requires the engine to skip blocks the journal already completed; deferred with boot-time resume (plan §9)",
 )
 
+/** Under the run: a block id names an instance inside one run, not a row in the whole journal. */
 const listAttempts = Effect.gen(function* () {
   const store = yield* Store
-  const blockId = BlockId.make(yield* pathParam("id"))
-  return yield* ok(yield* store.attempts(blockId))
+  const runId = RunId.make(yield* pathParam("id"))
+  const blockId = BlockId.make(yield* pathParam("blockId"))
+  return yield* ok(yield* store.attempts(runId, blockId))
 })
 
 const getAttempt = Effect.gen(function* () {
@@ -345,6 +388,7 @@ type ApiServices =
   | ContinuationService
   | EventBus
   | Journal
+  | RetrospectiveService
   | RunSupervisor
   | Store
   | WorkflowEngine
@@ -375,8 +419,11 @@ export const apiRoutes = (
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))
     yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
     yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
+    yield* router.post("/api/runs/:id/retrospective", route(respond(runRetrospective)))
     yield* router.post("/api/runs/:id/retry", retryRun)
-    yield* router.get("/api/blocks/:id/attempts", route(respond(listAttempts)))
+    yield* router.get("/api/insights", route(respond(listInsights)))
+    yield* router.get("/api/insights/:id", route(respond(getInsight)))
+    yield* router.get("/api/runs/:id/blocks/:blockId/attempts", route(respond(listAttempts)))
     yield* router.get("/api/attempts/:id", route(respond(getAttempt)))
     yield* router.get("/api/artifacts/:id", route(respond(getArtifact)))
     yield* router.get("/api/artifacts/:id/raw", route(respond(getArtifactRaw)))

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { agentTask, correctivePolicy, runCommand, verifyOutput } from "./blocks.js"
+import { agentTask, correctivePolicy, finalize, runCommand, verifyOutput } from "./blocks.js"
 import { BlockId } from "./ids.js"
 import { ContractField, PluginBinding, WorkflowNode } from "./workflow.js"
 
@@ -98,6 +98,7 @@ const task: WorkflowTemplate = {
         },
       },
       implementVerify,
+      { _tag: "Block", id: id("finalize"), def: finalize.id },
     ],
   },
   params: [focusParam],
@@ -111,6 +112,11 @@ const task: WorkflowTemplate = {
       blockId: id("approve-plan"),
       default: true,
       hint: "Drop when the user asked for the work to run unattended.",
+    },
+    {
+      blockId: id("finalize"),
+      default: true,
+      hint: "Drop when the user wants to read the worktree themselves before anything reaches their branch.",
     },
   ],
   allowedBindings: {},

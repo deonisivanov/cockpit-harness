@@ -30,6 +30,8 @@ import {
   PluginCatalogLive,
   ProcessSupervisor,
   ProcessSupervisorLive,
+  RetrospectiveLive,
+  RetrospectiveService,
   RetryCoordinator,
   RunId,
   Store,
@@ -73,6 +75,7 @@ export const providerLayer = (settings: Settings = {}) =>
 
 export type KernelContext =
   | Journal
+  | Store
   | SqlClient.SqlClient
   | EventBus
   | WorkspaceManager
@@ -144,7 +147,7 @@ export const runPlanning = <A, E>(
     ),
   )
 
-export type ContinuityContext = PlanningContext | ContinuationService | Store
+export type ContinuityContext = PlanningContext | ContinuationService
 
 /** The shims come first so a test that passes no settings still cannot reach the real herdr. */
 export const runContinuity = <A, E>(
@@ -157,6 +160,31 @@ export const runContinuity = <A, E>(
       Effect.provide(
         body,
         ContinuityLive.pipe(
+          Layer.provide(NodeContext.layer),
+          Layer.provide(
+            configuredHome(home, {
+              COCKPIT_HERDR_BIN: fixturePath("fake-herdr.mjs"),
+              COCKPIT_OPEN_BIN: fixturePath("fake-open.mjs"),
+              ...settings,
+            }),
+          ),
+        ),
+      ),
+    ),
+  )
+
+export type RetrospectiveContext = ContinuityContext | RetrospectiveService
+
+export const runRetrospective = <A, E>(
+  home: string,
+  body: Effect.Effect<A, E, RetrospectiveContext>,
+  settings: Settings = {},
+) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        body,
+        RetrospectiveLive.pipe(
           Layer.provide(NodeContext.layer),
           Layer.provide(
             configuredHome(home, {

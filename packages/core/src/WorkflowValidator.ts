@@ -70,6 +70,12 @@ const checkProblems = (check: Predicate): string | undefined => {
 const covers = (sources: ReadonlyArray<ContractField>, required: ContractField) =>
   sources.some((field) => field.name === required.name && field.type === required.type)
 
+/** Everything a workspace block can report; finalize is the only one Core ships. */
+const finalizeResult: ReadonlyArray<ContractField> = [
+  { name: "commit", type: "string", required: false },
+  { name: "commits", type: "number", required: false },
+]
+
 /** Everything a command block can report; the engine builds this shape and nothing else. */
 const commandResult: ReadonlyArray<ContractField> = [
   { name: "exitCode", type: "number", required: false },
@@ -123,21 +129,27 @@ export const validateWorkflow = (
         errors.push(fail("block-kind", at, "an agent block must not carry a command"))
       }
     } else {
-      if (command === undefined) {
+      if (def.kind === "command" && command === undefined) {
         errors.push(
           fail("block-kind", at, "a command block needs a command, from its definition or overrides"),
         )
       }
-      if (def.provider !== undefined || def.binding !== undefined) {
-        errors.push(fail("block-kind", at, "a command block must not name a provider or binding"))
+      if (def.kind === "workspace" && command !== undefined) {
+        errors.push(fail("block-kind", at, "a workspace block must not carry a command"))
       }
+      if (def.provider !== undefined || def.binding !== undefined) {
+        errors.push(
+          fail("block-kind", at, `a ${def.kind} block must not name a provider or binding`),
+        )
+      }
+      const produced = def.kind === "workspace" ? finalizeResult : commandResult
       for (const declared of def.output) {
-        if (!covers(commandResult, declared)) {
+        if (!covers(produced, declared)) {
           errors.push(
             fail(
-              "command-output",
+              `${def.kind}-output`,
               at,
-              `a command block cannot produce "${declared.name}" (${declared.type}); its result is ${commandResult
+              `a ${def.kind} block cannot produce "${declared.name}" (${declared.type}); its result is ${produced
                 .map((field) => `${field.name}: ${field.type}`)
                 .join(", ")}`,
             ),

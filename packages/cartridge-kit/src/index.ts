@@ -17,7 +17,8 @@ export type {
   WorkflowTemplate,
   WorkflowTree,
 } from "@cockpit/core"
-export { ValidationError } from "@cockpit/core"
+/** Walking the tree is what a validator does; there is no reason for every cartridge to rewrite it. */
+export { blocksIn, ValidationError } from "@cockpit/core"
 export type { BlockId } from "@cockpit/core"
 
 /** Block ids are branded in Core so two of them cannot be confused; a cartridge mints them here. */

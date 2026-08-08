@@ -40,6 +40,8 @@ describe("Rail", () => {
         selectedRunId="r1"
         onSelect={() => {}}
         onNewTask={() => {}}
+        insightsOpen={false}
+        onInsights={() => {}}
         badge={null}
         activity={[]}
         {...props}

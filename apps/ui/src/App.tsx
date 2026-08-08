@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { httpSource, type Source } from "./api.js"
+import { Insights } from "./Insights.js"
 import { isMockState, mockSource } from "./mock.js"
 import type { Project, Run, RunDetail, RunStatus, TerminalHandoff } from "./model.js"
 import {
@@ -35,6 +36,7 @@ function pickSource(): { source: Source; mock: string | null } {
 
 export default function App() {
   const { source, mock } = useMemo(pickSource, [])
+  const [insightsOpen, setInsightsOpen] = useState(mock === "insights")
   const [projects, setProjects] = useState<readonly Project[]>([])
   const [runs, setRuns] = useState<readonly Run[]>([])
   const [runId, setRunId] = useState<string | null>(null)
@@ -192,7 +194,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.metaKey || e.ctrlKey || e.altKey || insightsOpen) return
 
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault()
@@ -215,7 +217,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [rows, focus, toggleRow, state.gates, decide])
+  }, [rows, focus, toggleRow, state.gates, decide, insightsOpen])
 
   const run = detail?.run
   const waiting = state.gates.size ? "approval" : state.questions.size ? "question" : null
@@ -278,17 +280,21 @@ export default function App() {
             setFocus(-1)
             setExpanded(new Set())
             setHandoff(null)
+            setInsightsOpen(false)
           }}
           onNewTask={() => {
             setRunId(null)
             setHandoff(null)
+            setInsightsOpen(false)
           }}
           badge={waiting}
           activity={activity}
+          insightsOpen={insightsOpen}
+          onInsights={() => setInsightsOpen((v) => !v)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {runId && run && (
+          {!insightsOpen && runId && run && (
             <div className="mx-3 mt-3 flex-none rounded-xl border border-white/6 bg-head px-4 pt-3.5 pb-3">
               <div className="flex items-start gap-3.5">
                 <div
@@ -354,7 +360,9 @@ export default function App() {
           )}
 
           <div className="relative flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
-            {runId ? (
+            {insightsOpen ? (
+              <Insights source={source} />
+            ) : runId ? (
               <>
                 <Stream
                   rows={rows}

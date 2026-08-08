@@ -27,3 +27,60 @@ export const renderSlots = (text: string, values: Readonly<Record<string, unknow
  * JSON result, counted in bytes. Past it the block broke its contract rather than being truncated.
  */
 export const outputBudget = 1_048_576
+
+/**
+ * A section of a budgeted document. Nothing is ever cut in half: each section declares how many
+ * entries must survive, and the budget takes the rest from whichever section is furthest above
+ * its floor. Long material is named by artifact path, never pasted in.
+ */
+export interface Section {
+  readonly title: string
+  readonly entries: ReadonlyArray<string>
+  readonly floor: number
+}
+
+const render = (sections: ReadonlyArray<Section>, header: ReadonlyArray<string>) =>
+  [
+    ...header,
+    ...sections.flatMap((section) =>
+      section.entries.length === 0 ? [] : ["", `## ${section.title}`, ...section.entries],
+    ),
+    "",
+  ].join("\n")
+
+/** Trims the section furthest above its floor until the whole document fits, then clips the rest. */
+export const fitSections = (
+  sections: ReadonlyArray<Section>,
+  header: ReadonlyArray<string>,
+  maxChars: number,
+) => {
+  const kept = sections.map((section) => section.entries.length)
+  const draft = () =>
+    sections.map((section, at) =>
+      kept[at] >= section.entries.length
+        ? section
+        : {
+            ...section,
+            entries: [
+              ...section.entries.slice(0, kept[at]),
+              `… ${section.entries.length - kept[at]} more, see the artifact index`,
+            ],
+          },
+    )
+
+  for (;;) {
+    const text = render(draft(), header)
+    if (text.length <= maxChars) return text
+    let slack = 0
+    let index = -1
+    sections.forEach((section, at) => {
+      const room = kept[at] - section.floor
+      if (room > slack) {
+        slack = room
+        index = at
+      }
+    })
+    if (index === -1) return clip(text, maxChars)
+    kept[index] -= Math.ceil(slack / 2)
+  }
+}

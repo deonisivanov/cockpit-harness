@@ -1,5 +1,7 @@
 import type {
   ArtifactBody,
+  Insight,
+  InsightTarget,
   JournalEvent,
   Project,
   Run,
@@ -24,6 +26,7 @@ export interface Source extends EventSource {
   ): Promise<void>
   cancel(runId: string): Promise<void>
   openTerminal(runId: string): Promise<TerminalHandoff>
+  insights(target?: InsightTarget): Promise<readonly Insight[]>
 }
 
 /** The daemon answers failures in JSON too, and its `detail` is the only useful half of them. */
@@ -66,6 +69,8 @@ export const httpSource: Source = {
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),
   openTerminal: (runId) => post<TerminalHandoff>(`/runs/${runId}/terminal`),
+  insights: (target) =>
+    json<readonly Insight[]>(`/insights${target === undefined ? "" : `?target=${target}`}`),
 
   // The row carries kind/path; the body lives behind /raw, capped at 1 MiB by the daemon.
   async artifact(id) {

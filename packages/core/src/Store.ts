@@ -21,6 +21,7 @@ export interface RunRow {
   readonly baseCommit: string | null
   readonly worktreePath: string | null
   readonly branch: string | null
+  readonly targetBranch: string | null
   readonly cartridgeHash: string | null
   readonly canonicalSessionId: SessionId | null
   readonly createdAt: string
@@ -39,6 +40,7 @@ export interface BlockRow {
 
 export interface AttemptRow {
   readonly id: AttemptId
+  readonly runId: RunId
   readonly blockId: BlockId
   readonly number: number
   readonly sessionId: SessionId | null
@@ -74,7 +76,10 @@ export class Store extends Context.Tag("cockpit/Store")<
     readonly runs: (projectId: string) => Effect.Effect<ReadonlyArray<RunRow>, JournalError>
     readonly run: (id: RunId) => Effect.Effect<RunRow | undefined, JournalError>
     readonly blocks: (runId: RunId) => Effect.Effect<ReadonlyArray<BlockRow>, JournalError>
-    readonly attempts: (blockId: BlockId) => Effect.Effect<ReadonlyArray<AttemptRow>, JournalError>
+    readonly attempts: (
+      runId: RunId,
+      blockId: BlockId,
+    ) => Effect.Effect<ReadonlyArray<AttemptRow>, JournalError>
     readonly attempt: (id: AttemptId) => Effect.Effect<AttemptRow | undefined, JournalError>
     readonly artifact: (id: ArtifactId) => Effect.Effect<ArtifactRow | undefined, JournalError>
     /** The newest artifact of a kind, which is how a run's instantiated tree is found. */
@@ -98,12 +103,13 @@ export const StoreLive = Layer.effect(
 
     const runColumns = sql`id, project_id AS "projectId", prompt, status,
       base_commit AS "baseCommit", worktree_path AS "worktreePath", branch,
+      target_branch AS "targetBranch",
       cartridge_hash AS "cartridgeHash", canonical_session_id AS "canonicalSessionId",
       created_at AS "createdAt", finished_at AS "finishedAt"`
 
-    const attemptColumns = sql`id, block_id AS "blockId", number, session_id AS "sessionId",
-      verdict, result_json AS "resultJson", started_at AS "startedAt",
-      finished_at AS "finishedAt"`
+    const attemptColumns = sql`id, run_id AS "runId", block_id AS "blockId", number,
+      session_id AS "sessionId", verdict, result_json AS "resultJson",
+      started_at AS "startedAt", finished_at AS "finishedAt"`
 
     const artifactColumns = sql`id, run_id AS "runId", kind, path, bytes,
       created_at AS "createdAt"`
@@ -154,9 +160,10 @@ export const StoreLive = Layer.effect(
           Effect.mapError(asJournalError("blocks")),
         ),
 
-      attempts: (blockId) =>
+      attempts: (runId, blockId) =>
         sql<AttemptRow>`
-          SELECT ${attemptColumns} FROM attempts WHERE block_id = ${blockId}
+          SELECT ${attemptColumns} FROM attempts
+          WHERE run_id = ${runId} AND block_id = ${blockId}
           ORDER BY number`.pipe(Effect.mapError(asJournalError("attempts"))),
 
       attempt: (id) =>

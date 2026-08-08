@@ -12,6 +12,7 @@ import { HerdrClientLive } from "./Herdr.js"
 import { JournalLive } from "./Journal.js"
 import { PluginCatalogLive } from "./PluginCatalog.js"
 import { ProcessSupervisorLive } from "./ProcessSupervisor.js"
+import { RetrospectiveServiceLive } from "./Retrospective.js"
 import { RetryCoordinatorLive } from "./RetryCoordinator.js"
 import { TransformPipelineLive } from "./TransformPipeline.js"
 import { StoreLive } from "./Store.js"
@@ -43,6 +44,7 @@ export * from "./Provider.js"
 export * from "./Recovery.js"
 export * from "./Store.js"
 export * from "./RetryCoordinator.js"
+export * from "./Retrospective.js"
 export * from "./templates.js"
 export * from "./TemplateRegistry.js"
 export * from "./text.js"
@@ -84,4 +86,9 @@ export const PlanningLive = Layer.mergeAll(
 export const ContinuityLive = ContinuationServiceLive.pipe(
   Layer.provideMerge(HerdrClientLive),
   Layer.provideMerge(PlanningLive),
+)
+
+/** Cross-run learning (plan §16.8); it reads the journal a finished run left behind. */
+export const RetrospectiveLive = RetrospectiveServiceLive.pipe(
+  Layer.provideMerge(ContinuityLive),
 )

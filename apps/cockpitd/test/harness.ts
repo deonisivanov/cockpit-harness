@@ -1,7 +1,7 @@
 import { HttpClient, HttpClientRequest, HttpServer } from "@effect/platform"
 import { NodeContext, NodeHttpServer } from "@effect/platform-node"
 import { createServer } from "node:http"
-import { ContinuityLive, JournalEvent } from "@cockpit/core"
+import { JournalEvent, RetrospectiveLive } from "@cockpit/core"
 import { ConfigProvider, Effect, Layer, Schedule } from "effect"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -61,7 +61,7 @@ export type Settings = Readonly<Record<string, string>>
 
 export const daemonLayer = (settings: Settings = {}) =>
   RunSupervisorLive.pipe(
-    Layer.provideMerge(ContinuityLive),
+    Layer.provideMerge(RetrospectiveLive),
     Layer.provide(NodeContext.layer),
     Layer.provide(
       Layer.setConfigProvider(

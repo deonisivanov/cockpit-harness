@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Exit, HashMap, Layer, Ref } from "effect"
+import { Context, Deferred, Effect, Either, Exit, HashMap, Layer, Ref } from "effect"
 import { randomUUID } from "node:crypto"
 import { mkdir, readFile, rm } from "node:fs/promises"
 import * as NodePath from "node:path"
@@ -884,6 +884,43 @@ export const WorkflowEngineLive = Layer.effect(
             } satisfies Judged
           })
 
+        const runFinalize = (input: {
+          readonly def: BlockDef
+          readonly blockId: BlockId
+          readonly attemptId: AttemptId
+        }): Effect.Effect<Judged, EngineError> =>
+          Effect.gen(function* () {
+            const { attemptId, blockId, def } = input
+            const target = workspace.targetBranch
+            const mode = def.finalizeMode ?? "squash"
+            // A refusal is the answer, not a crash: the user has to read why their branch was left
+            // alone, and a failed block says that where an aborted run would not.
+            const landed = yield* Effect.either(
+              checkpoints.finalize(workspace, { targetBranch: target, mode }),
+            )
+            if (Either.isLeft(landed)) {
+              return {
+                failed: true,
+                whatFailed: [landed.left.detail],
+                assistantText: landed.left.detail,
+                actionsTaken: [],
+                commandsRun: [],
+                diagnostics: [],
+              } satisfies Judged
+            }
+            const output = { commit: landed.right.commit, commits: landed.right.commits }
+            const problems = yield* verify(def, blockId, attemptId, output)
+            return {
+              failed: problems.length > 0,
+              output,
+              whatFailed: problems,
+              assistantText: `${mode} of ${landed.right.commits} checkpoint(s) onto ${target} as ${landed.right.commit}`,
+              actionsTaken: [`moved ${target} to ${landed.right.commit}`],
+              commandsRun: [],
+              diagnostics: [],
+            } satisfies Judged
+          })
+
         const runBlock = (
           node: BlockNode,
           context: NodeContext,
@@ -976,7 +1013,9 @@ export const WorkflowEngineLive = Layer.effect(
                   }
 
                   const record =
-                    def.kind === "agent"
+                    def.kind === "workspace"
+                      ? yield* runFinalize({ def, blockId, attemptId })
+                      : def.kind === "agent"
                       ? yield* runAgent({
                           node,
                           def,

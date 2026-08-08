@@ -23,6 +23,7 @@ export interface CreateRunInput {
   readonly baseCommit?: string
   readonly worktreePath?: string
   readonly branch?: string
+  readonly targetBranch?: string
 }
 
 export interface StartBlockInput {
@@ -120,6 +121,24 @@ export class Journal extends Context.Tag("cockpit/Journal")<
     readonly recordArtifact: (input: RecordArtifactInput) => Effect.Effect<void, JournalError>
   }
 >() {}
+
+const eventPage = 1_000
+
+/** Every event of a run: `eventsFrom` answers one page, and a long run outgrows it. */
+export const allEvents = (
+  journal: Context.Tag.Service<Journal>,
+  runId: RunId,
+  after: EventSeq = EventSeq.make(0),
+): Effect.Effect<ReadonlyArray<JournalEvent>, JournalError> =>
+  Effect.gen(function* () {
+    const page = Array.from(
+      yield* Stream.runCollect(journal.eventsFrom(runId, after, eventPage)),
+    )
+    const last = page[page.length - 1]
+    return last === undefined || page.length < eventPage
+      ? page
+      : [...page, ...(yield* allEvents(journal, runId, last.seq))]
+  })
 
 const payloadJson = Schema.parseJson(EventPayload)
 const encodePayload = Schema.encode(payloadJson)
@@ -243,8 +262,8 @@ export const JournalLive = Layer.effect(
           SELECT
             (SELECT COUNT(*) FROM blocks
               WHERE run_id = ${runId} AND status = ${"running"}) AS blocks,
-            (SELECT COUNT(*) FROM attempts a JOIN blocks b ON b.id = a.block_id
-              WHERE b.run_id = ${runId} AND a.verdict IS NULL) AS attempts`
+            (SELECT COUNT(*) FROM attempts
+              WHERE run_id = ${runId} AND verdict IS NULL) AS attempts`
         const open = rows[0]
         if (open.blocks > 0 || open.attempts > 0) {
           return yield* new JournalError({
@@ -254,7 +273,7 @@ export const JournalLive = Layer.effect(
         }
       })
 
-    /** Foreign keys pin each id to an existing row; only a join proves it hangs under this run. */
+    /** Checkpoints carry no foreign key of their own, so this is what pins them under the run. */
     const requireCheckpointParents = (op: string, input: RecordCheckpointInput) =>
       Effect.gen(function* () {
         if (input.blockId !== undefined) {
@@ -269,8 +288,7 @@ export const JournalLive = Layer.effect(
         }
         if (input.attemptId !== undefined) {
           const rows = yield* sql<{ id: string }>`
-            SELECT a.id FROM attempts a JOIN blocks b ON b.id = a.block_id
-            WHERE a.id = ${input.attemptId} AND b.run_id = ${input.runId}`
+            SELECT id FROM attempts WHERE id = ${input.attemptId} AND run_id = ${input.runId}`
           if (rows.length === 0) {
             return yield* new JournalError({
               op,
@@ -280,11 +298,8 @@ export const JournalLive = Layer.effect(
         }
       })
 
-    const requireAbsent = (
-      op: string,
-      table: "runs" | "blocks" | "attempts" | "artifacts",
-      id: string,
-    ) =>
+    /** Only for the tables keyed by a generated id; a block id is unique to its run, not globally. */
+    const requireAbsent = (op: string, table: "runs" | "attempts" | "artifacts", id: string) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ id: string }>`
           SELECT id FROM ${sql(table)} WHERE id = ${id}`
@@ -293,10 +308,28 @@ export const JournalLive = Layer.effect(
         }
       })
 
-    const requireRunningAttempt = (op: string, blockId: BlockId, attemptId: AttemptId) =>
+    const requireBlockAbsent = (op: string, runId: RunId, blockId: BlockId) =>
+      Effect.gen(function* () {
+        const rows = yield* sql<{ id: string }>`
+          SELECT id FROM blocks WHERE id = ${blockId} AND run_id = ${runId}`
+        if (rows.length > 0) {
+          return yield* new JournalError({
+            op,
+            detail: `run ${runId} already has a block ${blockId}`,
+          })
+        }
+      })
+
+    const requireRunningAttempt = (
+      op: string,
+      runId: RunId,
+      blockId: BlockId,
+      attemptId: AttemptId,
+    ) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ verdict: string | null }>`
-          SELECT verdict FROM attempts WHERE id = ${attemptId} AND block_id = ${blockId}`
+          SELECT verdict FROM attempts
+          WHERE id = ${attemptId} AND block_id = ${blockId} AND run_id = ${runId}`
         const row = rows[0]
         if (row === undefined) {
           return yield* new JournalError({ op, detail: `unknown attempt ${attemptId}` })
@@ -364,7 +397,7 @@ export const JournalLive = Layer.effect(
             yield* requireAbsent("createRun", "runs", input.runId)
             const ts = yield* nowIso
             yield* sql`
-              INSERT INTO runs (id, project_id, prompt, status, base_commit, worktree_path, branch, created_at)
+              INSERT INTO runs (id, project_id, prompt, status, base_commit, worktree_path, branch, target_branch, created_at)
               VALUES (
                 ${input.runId},
                 ${input.projectId},
@@ -373,6 +406,7 @@ export const JournalLive = Layer.effect(
                 ${input.baseCommit ?? null},
                 ${input.worktreePath ?? null},
                 ${input.branch ?? null},
+                ${input.targetBranch ?? null},
                 ${ts}
               )`
             return {
@@ -415,7 +449,7 @@ export const JournalLive = Layer.effect(
           "startBlock",
           Effect.gen(function* () {
             yield* requireRunStatus("startBlock", input.runId, ["running"])
-            yield* requireAbsent("startBlock", "blocks", input.blockId)
+            yield* requireBlockAbsent("startBlock", input.runId, input.blockId)
             const ts = yield* nowIso
             yield* sql`
               INSERT INTO blocks (id, run_id, def_id, kind, status, started_at)
@@ -435,7 +469,8 @@ export const JournalLive = Layer.effect(
             yield* requireBlockStatus("finishBlock", runId, blockId, ["running"])
             const ts = yield* nowIso
             yield* sql`
-              UPDATE blocks SET status = ${status}, finished_at = ${ts} WHERE id = ${blockId}`
+              UPDATE blocks SET status = ${status}, finished_at = ${ts}
+              WHERE id = ${blockId} AND run_id = ${runId}`
             return { runId, blockId, payload: { _tag: "BlockFinished", status } as const }
           }),
         ),
@@ -445,7 +480,7 @@ export const JournalLive = Layer.effect(
           "skipBlock",
           Effect.gen(function* () {
             yield* requireRunStatus("skipBlock", input.runId, ["running"])
-            yield* requireAbsent("skipBlock", "blocks", input.blockId)
+            yield* requireBlockAbsent("skipBlock", input.runId, input.blockId)
             const ts = yield* nowIso
             yield* sql`
               INSERT INTO blocks (id, run_id, def_id, kind, status, started_at, finished_at)
@@ -466,9 +501,10 @@ export const JournalLive = Layer.effect(
             yield* requireAbsent("startAttempt", "attempts", input.attemptId)
             const ts = yield* nowIso
             yield* sql`
-              INSERT INTO attempts (id, block_id, number, session_id, started_at)
+              INSERT INTO attempts (id, run_id, block_id, number, session_id, started_at)
               VALUES (
                 ${input.attemptId},
+                ${input.runId},
                 ${input.blockId},
                 ${input.number},
                 ${input.sessionId ?? null},
@@ -491,7 +527,7 @@ export const JournalLive = Layer.effect(
         commitVoid(
           "finishAttempt",
           Effect.gen(function* () {
-            yield* requireRunningAttempt("finishAttempt", input.blockId, input.attemptId)
+            yield* requireRunningAttempt("finishAttempt", input.runId, input.blockId, input.attemptId)
             const ts = yield* nowIso
             yield* sql`
               UPDATE attempts SET verdict = ${input.verdict}, finished_at = ${ts}
@@ -509,7 +545,7 @@ export const JournalLive = Layer.effect(
         commitVoid(
           "interruptAttempt",
           Effect.gen(function* () {
-            yield* requireRunningAttempt("interruptAttempt", blockId, attemptId)
+            yield* requireRunningAttempt("interruptAttempt", runId, blockId, attemptId)
             const ts = yield* nowIso
             yield* sql`
               UPDATE attempts SET verdict = ${"interrupted"}, finished_at = ${ts} WHERE id = ${attemptId}`

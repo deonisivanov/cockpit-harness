@@ -51,6 +51,18 @@ export const fmtDuration = (ms: number): string => {
   return `${m}m${s.toString().padStart(2, "0")}`
 }
 
+/** Coarse enough for a list: a task from yesterday is "yd", not a timestamp nobody reads. */
+export const relativeTime = (iso: string): string => {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return ""
+  const m = Math.round(ms / 60_000)
+  if (m < 1) return "now"
+  if (m < 60) return `${m}m`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h}h`
+  return h < 48 ? "yd" : `${Math.round(h / 24)}d`
+}
+
 export const fmtClock = (iso: string): string => {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8)
@@ -170,6 +182,13 @@ export function describe(payload: EventPayload): EventView {
       return { tag: "attempt", tone: payload.verdict === "success" ? "green" : "red", summary: `attempt ${payload.verdict}`, ...none }
     case "BlockSkipped":
       return { tag: "block", tone: "slate", summary: `skipped · ${payload.reason}`, ...none }
+    case "RunFinalized":
+      return {
+        tag: "event",
+        tone: "green",
+        summary: `${payload.targetBranch} → ${payload.commit.slice(0, 8)} · ${payload.mode} of ${payload.commits}`,
+        ...none,
+      }
     default:
       return { tag: "event", tone: "mute", summary: payload._tag, ...none }
   }

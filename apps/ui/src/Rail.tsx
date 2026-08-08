@@ -1,4 +1,5 @@
 import type { Project, Run, RunStatus } from "./model.js"
+import { relativeTime } from "./presentation.js"
 
 const DOT: Record<RunStatus, { glyph: string; className: string }> = {
   running: { glyph: "●", className: "text-vio animate-ck-pulse" },
@@ -7,17 +8,6 @@ const DOT: Record<RunStatus, { glyph: string; className: string }> = {
   failed: { glyph: "✕", className: "text-red" },
   cancelled: { glyph: "✕", className: "text-slate" },
   interrupted: { glyph: "◐", className: "text-amber" },
-}
-
-export const relativeTime = (iso: string): string => {
-  const ms = Date.now() - new Date(iso).getTime()
-  if (!Number.isFinite(ms) || ms < 0) return ""
-  const m = Math.round(ms / 60_000)
-  if (m < 1) return "now"
-  if (m < 60) return `${m}m`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h`
-  return h < 48 ? "yd" : `${Math.round(h / 24)}d`
 }
 
 export interface RailProps {
@@ -30,6 +20,8 @@ export interface RailProps {
   readonly onNewTask: () => void
   readonly badge: string | null
   readonly activity: readonly { text: string; tone: string }[]
+  readonly insightsOpen: boolean
+  readonly onInsights: () => void
 }
 
 export function Rail({
@@ -42,6 +34,8 @@ export function Rail({
   onNewTask,
   badge,
   activity,
+  insightsOpen,
+  onInsights,
 }: RailProps) {
   const badged = (r: Run) => (r.id === selectedRunId && badge ? badge : null)
   const ordered = [...runs].sort((a, b) => (badged(b) ? 1 : 0) - (badged(a) ? 1 : 0))
@@ -74,6 +68,17 @@ export function Rail({
 
       {!expanded && (
         <div className="flex flex-col gap-[3px] px-2 py-1">
+          <button
+            type="button"
+            data-testid="rail-insights"
+            title="insights"
+            onClick={onInsights}
+            className={`flex h-[30px] items-center justify-center rounded-md text-[10px] ${
+              insightsOpen ? "bg-vio/12 text-vio-hi" : "text-ink-4 hover:text-ink-2"
+            }`}
+          >
+            ✳
+          </button>
           {ordered.slice(0, 8).map((r) => (
             <button
               key={r.id}
@@ -144,6 +149,18 @@ export function Rail({
               className="w-full rounded-md border border-dashed border-white/11 px-2.5 py-2 text-center font-sans text-[12px] font-medium text-[#7a7a86] hover:border-vio/40 hover:text-vio-hi"
             >
               + new task
+            </button>
+            <button
+              type="button"
+              data-testid="rail-insights"
+              onClick={onInsights}
+              className={`mt-1.5 w-full rounded-md border px-2.5 py-2 text-center font-sans text-[12px] font-medium ${
+                insightsOpen
+                  ? "border-vio/40 bg-vio/10 text-vio-hi"
+                  : "border-transparent text-[#7a7a86] hover:bg-white/3"
+              }`}
+            >
+              ✳ insights
             </button>
           </div>
 

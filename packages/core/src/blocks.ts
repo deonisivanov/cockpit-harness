@@ -86,6 +86,29 @@ export const runCommand: BlockDef = {
   fallback: { _tag: "Fail" },
 }
 
-export const coreBlocks: ReadonlyArray<BlockDef> = [agentTask, verifyOutput, runCommand]
+/**
+ * Reads the run's checkpoints and writes only to the target branch's ref, so it takes no worktree
+ * access of its own — marking it a writer would earn it a pointless empty checkpoint afterwards.
+ */
+export const finalize: BlockDef = {
+  id: "finalize",
+  kind: "workspace",
+  title: "Land the run's checkpoints on the target branch",
+  input: [],
+  output: [
+    { name: "commit", type: "string", required: true },
+    { name: "commits", type: "number", required: true },
+  ],
+  sessionPolicy: "fresh",
+  retryPolicy: singleAttemptPolicy.id,
+  timeoutMs: 5 * minute,
+  permissionProfile: "read-only",
+  workspaceAccess: "read",
+  finalizeMode: "squash",
+  successCriteria: [],
+  fallback: { _tag: "Fail" },
+}
+
+export const coreBlocks: ReadonlyArray<BlockDef> = [agentTask, verifyOutput, runCommand, finalize]
 
 export const coreRetryPolicies: ReadonlyArray<RetryPolicy> = [singleAttemptPolicy, correctivePolicy]

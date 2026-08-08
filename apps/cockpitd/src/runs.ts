@@ -9,6 +9,7 @@ import {
   JournalError,
   PluginCatalog,
   ProjectRow,
+  RetrospectiveService,
   RunId,
   TransformPipeline,
   WorkflowEngine,
@@ -51,6 +52,7 @@ export const RunSupervisorLive = Layer.scoped(
     const loader = yield* CartridgeLoader
     const plugins = yield* PluginCatalog
     const engine = yield* WorkflowEngine
+    const retrospectives = yield* RetrospectiveService
 
     const running = yield* Ref.make(HashMap.empty<RunId, Fiber.RuntimeFiber<void>>())
 
@@ -135,6 +137,18 @@ export const RunSupervisorLive = Layer.scoped(
         Effect.uninterruptible,
       )
 
+    /**
+     * The retrospective reads a run that is already over, so nothing it does may change how that
+     * run ended: a failure of its own is journaled and logged, and the run keeps its status.
+     * A cancelled run has nothing to learn from — it was stopped, not judged.
+     */
+    const retrospect = (runId: RunId) =>
+      Effect.gen(function* () {
+        const status = yield* journal.runStatus(runId)
+        if (status !== "succeeded" && status !== "failed") return
+        yield* retrospectives.analyze(runId)
+      }).pipe(Effect.ignoreLogged)
+
     const supervise = (runId: RunId, body: Effect.Effect<unknown, unknown>) =>
       Effect.matchCauseEffect(body, {
         onSuccess: () => Effect.void,
@@ -175,6 +189,7 @@ export const RunSupervisorLive = Layer.scoped(
             baseCommit: workspace.baseCommit,
             worktreePath: workspace.path,
             branch: workspace.branch,
+            targetBranch: workspace.targetBranch,
           })
 
           // Registered before it runs, so a run that fails at once cannot be cleaned up before the
@@ -188,6 +203,8 @@ export const RunSupervisorLive = Layer.scoped(
               const fiber = yield* Effect.interruptible(
                 Deferred.await(registered).pipe(
                   Effect.zipRight(supervise(runId, execute({ ...input, runId, workspace }))),
+                  // Interruption resumes past this, which is what keeps a cancelled run out of it.
+                  Effect.zipRight(retrospect(runId)),
                 ),
               ).pipe(
                 Effect.ensuring(Ref.update(running, HashMap.remove(runId))),

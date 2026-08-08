@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { CommandSpec } from "./CommandRunner.js"
-import { BlockKind, ErrorClass, PluginEntry } from "./events.js"
+import { BlockKind, ErrorClass, FinalizeMode, PluginEntry } from "./events.js"
 import { ArtifactId, BlockId, CheckpointId, RunId } from "./ids.js"
 import { PermissionProfile, ProviderName } from "./Provider.js"
 
@@ -88,6 +88,8 @@ export const BlockDef = Schema.Struct({
   binding: Schema.optional(PluginBinding),
   promptTemplate: Schema.optional(Schema.String),
   command: Schema.optional(CommandSpec),
+  /** Workspace blocks only, like `command` for command blocks and `provider` for agent ones. */
+  finalizeMode: Schema.optional(FinalizeMode),
   sessionPolicy: Schema.Literal("fresh", "continue"),
   retryPolicy: Schema.String,
   timeoutMs: Schema.Int,

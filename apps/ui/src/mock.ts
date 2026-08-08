@@ -1,6 +1,7 @@
 import type {
   ArtifactBody,
   EventPayload,
+  Insight,
   JournalEvent,
   Project,
   Run,
@@ -20,6 +21,7 @@ export const MOCK_STATES = [
   "finished",
   "cancelled",
   "recovery",
+  "insights",
 ] as const
 export type MockState = (typeof MOCK_STATES)[number]
 
@@ -520,6 +522,34 @@ function fixture(state: MockState): Fixture {
   return { events: b.events, status: "succeeded", streamFrom: b.events.length }
 }
 
+const INSIGHTS: readonly Insight[] = [
+  {
+    id: "ins_1",
+    target: "core",
+    title: "Retry context is too large to be read",
+    body: "The second attempt was handed a **12 KB** failure packet and repeated the first attempt's hypothesis anyway.\n\nBudget the packet down to the findings, or route only the verifier's own words.",
+    evidence: [
+      { kind: "artifact", ref: "~/.cockpit/runs/run_7f2a91/art_packet-attempt-2-feedback.md" },
+      { kind: "block", ref: "implement" },
+    ],
+    occurrences: 3,
+    firstSeenRun: "run_b4",
+    lastSeenRun: RUN,
+    lastSeenAt: new Date(START + 634_000).toISOString(),
+  },
+  {
+    id: "ins_2",
+    target: "cartridge",
+    title: "The reproduction block runs after the fix, not before it",
+    body: "`issue-reproduce` is scheduled inside the corrective loop, so the first implement attempt has no failing test to aim at.",
+    evidence: [{ kind: "block", ref: "reproduce" }],
+    occurrences: 1,
+    firstSeenRun: RUN,
+    lastSeenRun: RUN,
+    lastSeenAt: new Date(START + 634_000).toISOString(),
+  },
+]
+
 const STREAM_INTERVAL_MS = 500
 
 export function mockSource(state: MockState): Source {
@@ -595,6 +625,8 @@ export function mockSource(state: MockState): Source {
     cancel: async () => {
       emit({ _tag: "RunCancelled" })
     },
+    insights: async (target) =>
+      target === undefined ? INSIGHTS : INSIGHTS.filter((row) => row.target === target),
     openTerminal: async () => ({
       opened: true,
       mode: "herdr",

@@ -79,7 +79,7 @@ interface AnalyzerDecision {
 ```ts
 interface BlockDef<I, O> {
   id: string
-  kind: "agent" | "command"
+  kind: "agent" | "command" | "workspace"   // workspace: executed natively by the engine (finalize)
   title: string
   input: ContractField[]            // settled in Phase 4: {name, type, required} list — journal/UI-serializable,
   output: ContractField[]           // structurally comparable by the validator; runtime Schema derived from it.
@@ -88,6 +88,7 @@ interface BlockDef<I, O> {
   binding?: PluginBinding                    // agent blocks, optional
   promptTemplate?: string                    // agent blocks; rendered with input + failure packet
   command?: { argv: string[]; env?: Record<string, string>; successRules?: OutputRule[] }  // command blocks
+  finalizeMode?: "squash" | "ordered"         // workspace blocks; default "squash"
   sessionPolicy: "fresh" | "continue"        // default "fresh" (ADR-004)
   retryPolicy: RetryPolicyRef
   timeoutMs: number
@@ -223,6 +224,8 @@ type EventPayload =
   | ErrorRaised { class; signature; message; ref? }
   | ArtifactCreated
   | CheckpointCreated { kind: "success" | "salvage" }
+  | RunFinalized { targetBranch; mode: "squash" | "ordered"; commit; commits; previousTip }
+      // the only event describing a write outside the run's own worktree
   | ApprovalRequested { payloadRef } | ApprovalDecided { approved; note? }
   | RetryScheduled { class: "technical" | "semantic"; nextAttempt: number }
   | VerificationReported { criteria: { criterion; passed; evidenceRef }[] }
@@ -234,17 +237,26 @@ type EventPayload =
 
 ```sql
 projects  (id, name, repo_path, cartridge_hash, created_at)
-runs      (id, project_id, prompt, status, base_commit, worktree_path, branch,
+runs      (id, project_id, prompt, status, base_commit, worktree_path, branch, target_branch,
            provider_versions_json, plugin_versions_json, cartridge_hash,
            canonical_session_id, created_at, finished_at)
-blocks    (id, run_id, def_id, kind, status, started_at, finished_at)
-attempts  (id, block_id, number, session_id, verdict, result_json, started_at, finished_at)
+           -- target_branch: the branch the user's checkout was on at run creation; finalize's target
+blocks    (id, run_id, def_id, kind, status, started_at, finished_at,
+           PRIMARY KEY (run_id, id))
+attempts  (id, run_id, block_id, number, session_id, verdict, result_json, started_at,
+           finished_at, FOREIGN KEY (run_id, block_id) REFERENCES blocks (run_id, id))
 events    (seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id, block_id, attempt_id, ts, payload_json)
 artifacts (id, run_id, kind, path, bytes, created_at)
 checkpoints (id /* sha */, run_id, block_id, attempt_id, kind, created_at)
 insights  (id, dedup_key UNIQUE, target /* core|cartridge */, title, body, evidence_json,
            occurrences, first_seen_run, last_seen_run)
 ```
+
+**Settled in Phase 8:** a `BlockId` is a per-run instance id (`implement`, `implement#2`), so it
+keys a block only together with its run — a global `blocks.id` primary key made the second run of any
+template fail at its first block. `attempts` carries `run_id` for the composite parent key, which
+also drops the join every attempt read previously needed to learn which run it belonged to. Attempts
+are addressed under their run: `GET /api/runs/:id/blocks/:blockId/attempts`.
 
 Run artifacts (prompts, transcripts, long output, packets, briefs) are files under `~/.cockpit/runs/<runId>/`, addressed by `artifacts` rows. The DB stores references and compact JSON only.
 

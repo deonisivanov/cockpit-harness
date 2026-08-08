@@ -2,6 +2,7 @@ import { expect, it } from "vitest"
 import {
   agentTask,
   correctivePolicy,
+  finalize,
   RunId,
   runCommand,
   singleAttemptPolicy,
@@ -69,6 +70,23 @@ const cases: ReadonlyArray<Case> = [
     name: "a command block with nothing to run",
     rule: "block-kind",
     tree: tree(block("cmd", runCommand.id)),
+  },
+  {
+    name: "a workspace block handed a command to run",
+    rule: "block-kind",
+    tree: tree(block("land", finalize.id, { overrides: { command: { argv: ["true"] } } })),
+  },
+  {
+    name: "a workspace block promising a field finalize cannot report",
+    rule: "workspace-output",
+    tree: tree(block("land", "chatty-finalize")),
+    catalog: catalog([
+      {
+        ...finalize,
+        id: "chatty-finalize",
+        output: [{ name: "summary", type: "string", required: true }],
+      },
+    ]),
   },
   {
     name: "a block whose timeout was overridden away",

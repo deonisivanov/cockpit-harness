@@ -89,7 +89,73 @@ const initial = Effect.gen(function* () {
   )`
 })
 
-const migrate = Migrator.make({})({ loader: Migrator.fromRecord({ "0001_initial": initial }) })
+/** The branch the user's checkout was on when the run started; where finalize lands (plan §9). */
+const targetBranch = Effect.flatMap(
+  SqlClient.SqlClient,
+  (sql) => sql`ALTER TABLE runs ADD COLUMN target_branch TEXT`,
+)
+
+/**
+ * A BlockId is a per-run instance id (`implement`, `implement#2`), unique only inside its run, so a
+ * global `blocks.id` key made every second run of a template collide. SQLite cannot alter a primary
+ * key, hence the rebuild.
+ *
+ * No `PRAGMA foreign_keys` toggling: the migrator runs every migration inside one transaction, and
+ * SQLite ignores that pragma there. The order below never needs it — each child is dropped before
+ * its parent, and the renames happen with enforcement *on*, which is precisely what rewrites
+ * `attempts_new`'s REFERENCES clause to point at the renamed `blocks`.
+ */
+const runScopedBlocks = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`CREATE TABLE blocks_new (
+    id TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES runs (id),
+    def_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    PRIMARY KEY (run_id, id)
+  )`
+  yield* sql`
+    INSERT INTO blocks_new (id, run_id, def_id, kind, status, started_at, finished_at)
+    SELECT id, run_id, def_id, kind, status, started_at, finished_at FROM blocks`
+  // `run_id` is what the composite parent key demands, and it pays for itself: every read of an
+  // attempt asks which run it belongs to, and none of them has to reach through blocks to find out.
+  yield* sql`CREATE TABLE attempts_new (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    block_id TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    session_id TEXT,
+    verdict TEXT,
+    result_json TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    FOREIGN KEY (run_id, block_id) REFERENCES blocks_new (run_id, id)
+  )`
+  yield* sql`
+    INSERT INTO attempts_new (id, run_id, block_id, number, session_id, verdict, result_json,
+      started_at, finished_at)
+    SELECT a.id, b.run_id, a.block_id, a.number, a.session_id, a.verdict, a.result_json,
+      a.started_at, a.finished_at
+    FROM attempts a JOIN blocks b ON b.id = a.block_id`
+  yield* sql`DROP TABLE attempts`
+  yield* sql`DROP TABLE blocks`
+  yield* sql`ALTER TABLE blocks_new RENAME TO blocks`
+  yield* sql`ALTER TABLE attempts_new RENAME TO attempts`
+  // The composite primary key's own index already has run_id as its prefix, so `blocks_run` is not
+  // recreated; attempts are read per block within a run.
+  yield* sql`CREATE INDEX attempts_block ON attempts (run_id, block_id)`
+})
+
+const migrate = Migrator.make({})({
+  loader: Migrator.fromRecord({
+    "0001_initial": initial,
+    "0002_target_branch": targetBranch,
+    "0003_run_scoped_blocks": runScopedBlocks,
+  }),
+})
 
 const ClientLive = Layer.unwrapEffect(
   Effect.map(ensureCockpitHome, (home) =>

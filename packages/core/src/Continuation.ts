@@ -1,5 +1,5 @@
 import { FileSystem } from "@effect/platform"
-import { Chunk, Config, Context, Effect, Layer, Stream } from "effect"
+import { Config, Context, Effect, Layer } from "effect"
 import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import * as NodePath from "node:path"
@@ -11,8 +11,8 @@ import { codexBinary } from "./CodexProvider.js"
 import { HerdrError, JournalError, WorkspaceError } from "./errors.js"
 import { JournalEvent } from "./events.js"
 import { HerdrClient, TerminalMode } from "./Herdr.js"
-import { EventSeq, RunId, SessionId } from "./ids.js"
-import { Journal } from "./Journal.js"
+import { RunId, SessionId } from "./ids.js"
+import { allEvents, Journal } from "./Journal.js"
 import { ProviderName } from "./Provider.js"
 import { ProjectRow, RunRow, Store } from "./Store.js"
 import { clip, oneLine } from "./text.js"
@@ -21,7 +21,6 @@ import { CheckpointService, Workspace, WorkspaceManager } from "./Workspace.js"
 const briefBudgetChars = 40_000
 const titleChars = 48
 const detailChars = 500
-const eventPage = 1_000
 
 /**
  * codex assigns its own session ids and only surfaces them inside the TUI, so Cockpit has none to
@@ -127,20 +126,6 @@ export const ContinuationServiceLive = Layer.effect(
 
     const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false))
 
-    const allEvents = (
-      runId: RunId,
-      after: EventSeq,
-    ): Effect.Effect<ReadonlyArray<JournalEvent>, JournalError> =>
-      Effect.gen(function* () {
-        const page = Chunk.toReadonlyArray(
-          yield* Stream.runCollect(journal.eventsFrom(runId, after, eventPage)),
-        )
-        const last = page[page.length - 1]
-        return last === undefined || page.length < eventPage
-          ? page
-          : [...page, ...(yield* allEvents(runId, last.seq))]
-      })
-
     /**
      * A cartridge that no longer loads must not stand between the user and their terminal, so the
      * brief goes without the project's checks rather than the press failing.
@@ -232,7 +217,7 @@ export const ContinuationServiceLive = Layer.effect(
 
           // A resume needs neither the journal nor a brief, so the read is deferred to the paths
           // that do: a vanished worktree, and seeding.
-          const events = yield* Effect.cached(allEvents(runId, EventSeq.make(0)))
+          const events = yield* Effect.cached(allEvents(journal, runId))
 
           const recorded = run.worktreePath
           const present = recorded !== null && (yield* exists(recorded))
@@ -245,6 +230,7 @@ export const ContinuationServiceLive = Layer.effect(
               repoPath: project.repoPath,
               path: recorded,
               branch: run.branch ?? `cockpit/run-${runId}`,
+              targetBranch: run.targetBranch ?? undefined,
               baseCommit: run.baseCommit ?? "HEAD",
             }
           } else {
@@ -254,6 +240,7 @@ export const ContinuationServiceLive = Layer.effect(
               projectId: run.projectId,
               repoPath: project.repoPath,
               branch: run.branch ?? `cockpit/run-${runId}`,
+              targetBranch: run.targetBranch ?? undefined,
               commit: lastCheckpoint(yield* events) ?? run.baseCommit ?? "HEAD",
               runId,
             })

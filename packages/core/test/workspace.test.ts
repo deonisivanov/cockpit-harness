@@ -363,3 +363,242 @@ it("resolves a repository root and labels a non-repository as a resolve failure"
   expect(result.nested).toMatchObject({ _tag: "Right" })
   expect(result.plain).toMatchObject({ _tag: "Left", left: { op: "resolve" } })
 })
+
+/** Two blocks' worth of successful work, plus what a failed attempt left behind. */
+const withCheckpoints = (repo: Repo) =>
+  Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService
+    const workspace = yield* createWorkspace(repo)
+    const write = (name: string, body: string) =>
+      Effect.promise(() => writeFile(NodePath.join(workspace.path, name), body))
+
+    // The engine opens every run with one of these, and blocks that touch no file add more.
+    yield* checkpoints.checkpoint(workspace, { kind: "success", message: "cockpit: baseline" })
+    yield* write("one.txt", "one\n")
+    yield* checkpoints.checkpoint(workspace, { kind: "success", message: "cockpit: one" })
+    yield* write("two.txt", "two\n")
+    yield* checkpoints.checkpoint(workspace, { kind: "success", message: "cockpit: two" })
+    yield* write("scratch.txt", "abandoned\n")
+    yield* checkpoints.checkpoint(workspace, { kind: "salvage", message: "cockpit: salvage" })
+    return workspace
+  })
+
+const has = (repoPath: string, name: string) => existsSync(NodePath.join(repoPath, name))
+
+it("squashes the run's successful checkpoints onto the target branch, leaving the salvage behind", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      // Plan §17: nothing reaches the user's checkout while the run is still working.
+      const before = {
+        head: git(repo.repoPath, "rev-parse", "HEAD"),
+        carriesWork: has(repo.repoPath, "one.txt"),
+      }
+      const landed = yield* checkpoints.finalize(workspace, {
+        targetBranch: workspace.targetBranch,
+        mode: "squash",
+      })
+      return { ...landed, before, events: payloads(yield* readEvents(runId)), repo, workspace }
+    }),
+  )
+
+  const { repoPath } = result.repo
+  expect(result.workspace.targetBranch).toBe("main")
+  expect(result.before).toEqual({ head: result.repo.baseCommit, carriesWork: false })
+
+  expect(result.commits).toBe(1)
+  expect(git(repoPath, "rev-parse", "main")).toBe(result.commit)
+  expect(git(repoPath, "rev-parse", "main^")).toBe(result.repo.baseCommit)
+  expect(git(repoPath, "log", "--format=%s", `${result.repo.baseCommit}..main`)).toBe(
+    `cockpit: run ${runId}`,
+  )
+
+  // Both successes' content arrived; the salvage did not, and the checkout was fast-forwarded to
+  // match rather than left showing the new files as deleted.
+  expect(has(repoPath, "one.txt")).toBe(true)
+  expect(has(repoPath, "two.txt")).toBe(true)
+  expect(has(repoPath, "scratch.txt")).toBe(false)
+  expect(git(repoPath, "status", "--porcelain")).toBe("")
+  expect(result.events).toContain("RunFinalized")
+})
+
+it("replays each successful checkpoint in order when the mode is ordered", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      const landed = yield* checkpoints.finalize(workspace, {
+        targetBranch: workspace.targetBranch,
+        mode: "ordered",
+      })
+      return { ...landed, repo }
+    }),
+  )
+
+  const { repoPath, baseCommit } = result.repo
+  // Three success checkpoints in, two commits out: the empty one changed no tree to replay.
+  expect(result.commits).toBe(2)
+  expect(git(repoPath, "rev-parse", "main^^")).toBe(baseCommit)
+  // Newest first, and each keeps the message its checkpoint was made under.
+  expect(git(repoPath, "log", "--format=%s", `${baseCommit}..main`).split("\n")).toEqual([
+    "cockpit: two",
+    "cockpit: one",
+  ])
+  expect(has(repoPath, "scratch.txt")).toBe(false)
+})
+
+it("refuses to finalize onto a branch whose checkout has uncommitted changes", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      yield* Effect.promise(() =>
+        writeFile(NodePath.join(repo.repoPath, "app.txt"), "the user was mid-edit\n"),
+      )
+      const refused = yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: workspace.targetBranch, mode: "squash" }),
+      )
+      return { refused, repo }
+    }),
+  )
+
+  const { repoPath, baseCommit } = result.repo
+  expect(result.refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(result.refused)).toContain("uncommitted changes")
+  // The branch never moved and the edit is exactly where the user left it.
+  expect(git(repoPath, "rev-parse", "main")).toBe(baseCommit)
+  expect(await readFile(NodePath.join(repoPath, "app.txt"), "utf8")).toBe("the user was mid-edit\n")
+  expect(has(repoPath, "one.txt")).toBe(false)
+})
+
+it("refuses a second finalize of the same run rather than replaying it onto its own result", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      const target = { targetBranch: workspace.targetBranch, mode: "squash" } as const
+      const first = yield* checkpoints.finalize(workspace, target)
+      const second = yield* Effect.either(checkpoints.finalize(workspace, target))
+      return { first, second, repo }
+    }),
+  )
+
+  const { repoPath, baseCommit } = result.repo
+  expect(result.second).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(git(repoPath, "rev-parse", "main")).toBe(result.first.commit)
+  expect(git(repoPath, "rev-list", "--count", `${baseCommit}..main`)).toBe("1")
+})
+
+it("refuses to finalize a run that started from a detached checkout", async () => {
+  const refused = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      return yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: "HEAD", mode: "squash" }),
+      )
+    }),
+  )
+
+  expect(refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(refused)).toContain("detached")
+})
+
+it("leaves the branch alone when the run changed no file, without calling it a failure", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* createWorkspace(repo)
+      yield* checkpoints.checkpoint(workspace, { kind: "success", message: "cockpit: baseline" })
+      const landed = yield* checkpoints.finalize(workspace, {
+        targetBranch: workspace.targetBranch,
+        mode: "squash",
+      })
+      return { landed, repo, events: yield* readEvents(runId) }
+    }),
+  )
+
+  expect(result.landed).toEqual({ commit: result.repo.baseCommit, commits: 0 })
+  expect(git(result.repo.repoPath, "rev-parse", "main")).toBe(result.repo.baseCommit)
+  // Recorded even though nothing moved: "finalize ran and found nothing" is the answer.
+  expect(result.events.filter((event) => event.payload._tag === "RunFinalized")).toMatchObject([
+    { payload: { commits: 0 } },
+  ])
+})
+
+/** Commits in the fixture repo have to dodge its signing config and its failing pre-commit hook. */
+const commit = (repoPath: string, message: string) =>
+  git(repoPath, "-c", "commit.gpgsign=false", "-c", "user.email=f@example.com", "-c", "user.name=F",
+      "commit", "--no-verify", "-a", "-m", message)
+
+it("refuses to finalize while the repository has an operation in progress", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      // A conflicting rebase between two side branches: main never moves, so the only thing
+      // wrong with the repository is the sequencer left mid-flight.
+      yield* Effect.promise(async () => {
+        git(repo.repoPath, "checkout", "-q", "-b", "a", repo.baseCommit)
+        await writeFile(NodePath.join(repo.repoPath, "app.txt"), "a\n")
+        commit(repo.repoPath, "a")
+        git(repo.repoPath, "checkout", "-q", "-b", "b", repo.baseCommit)
+        await writeFile(NodePath.join(repo.repoPath, "app.txt"), "b\n")
+        commit(repo.repoPath, "b")
+        try {
+          git(repo.repoPath, "-c", "commit.gpgsign=false", "rebase", "a", "b")
+        } catch {
+          // The conflict is the point; git exits non-zero and leaves the rebase state behind.
+        }
+      })
+      const refused = yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: workspace.targetBranch, mode: "squash" }),
+      )
+      return { refused, repo }
+    }),
+  )
+
+  expect(result.refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(result.refused)).toContain("operation in progress")
+  expect(String(result.refused)).toMatch(/rebase-(merge|apply)/)
+  expect(git(result.repo.repoPath, "rev-parse", "main")).toBe(result.repo.baseCommit)
+})
+
+it("refuses to finalize onto a branch another worktree has checked out", async () => {
+  const elsewhere = await tempDir("cockpit-other-")
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      // main is freed here and taken there, so finalize would move it under a checkout it
+      // knows nothing about.
+      const held = NodePath.join(elsewhere, "wt")
+      git(repo.repoPath, "checkout", "-q", "-b", "parking")
+      git(repo.repoPath, "worktree", "add", "-q", held, "main")
+      const refused = yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: workspace.targetBranch, mode: "squash" }),
+      )
+      return { refused, repo, held }
+    }),
+  )
+
+  expect(result.refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(result.refused)).toContain("another worktree")
+  expect(git(result.repo.repoPath, "rev-parse", "main")).toBe(result.repo.baseCommit)
+})
+
+it("refuses to finalize a run recorded before the target branch was tracked", async () => {
+  const refused = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      return yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: undefined, mode: "squash" }),
+      )
+    }),
+  )
+
+  expect(refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(refused)).toContain("predates target-branch tracking")
+})

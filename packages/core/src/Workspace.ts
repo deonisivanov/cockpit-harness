@@ -1,11 +1,11 @@
 import { Command, CommandExecutor } from "@effect/platform"
 import { SqlClient } from "@effect/sql"
 import { Context, Effect, Layer, Stream } from "effect"
-import { realpathSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import * as NodePath from "node:path"
 import { cockpitHome } from "./config.js"
 import { JournalError, WorkspaceError } from "./errors.js"
-import type { CheckpointKind } from "./events.js"
+import type { CheckpointKind, FinalizeMode } from "./events.js"
 import { AttemptId, BlockId, CheckpointId, RunId } from "./ids.js"
 import { Journal } from "./Journal.js"
 
@@ -16,6 +16,21 @@ export interface Workspace {
   readonly path: string
   readonly branch: string
   readonly baseCommit: string
+  /**
+   * The branch the user's checkout was on: `HEAD` when it was detached, and undefined for a run
+   * recorded before the column existed. Finalize refuses each with its own reason.
+   */
+  readonly targetBranch: string | undefined
+}
+
+export interface FinalizeInput {
+  readonly targetBranch: string | undefined
+  readonly mode: FinalizeMode
+}
+
+export interface FinalizeResult {
+  readonly commit: string
+  readonly commits: number
 }
 
 export interface CheckpointInput {
@@ -107,6 +122,7 @@ export class WorkspaceManager extends Context.Tag("cockpit/WorkspaceManager")<
       readonly repoPath: string
       readonly runId: RunId
       readonly branch: string
+      readonly targetBranch: string | undefined
       readonly commit: string
     }) => Effect.Effect<Workspace, WorkspaceError>
     readonly reconcile: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
@@ -134,6 +150,10 @@ export const WorkspaceManagerLive = Layer.effect(
             new WorkspaceError({ op, detail: `worktree path ${path} escapes ${root}` }),
           )
 
+    /** `HEAD` when the checkout is detached, which finalize refuses rather than guessing at. */
+    const currentBranch = (op: WorkspaceOp, repoPath: string) =>
+      git(op, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+
     return {
       create: (input) =>
         Effect.gen(function* () {
@@ -141,8 +161,11 @@ export const WorkspaceManagerLive = Layer.effect(
           const path = NodePath.resolve(root, input.projectId, input.runId)
           yield* requireInsideRoot("create", path)
           const branch = `cockpit/run-${input.runId}`
+          // Read before the worktree exists: `worktree add` does not move the checkout, but the
+          // branch finalize lands on is the one the run started from, not the one it ends on.
+          const targetBranch = yield* currentBranch("create", input.repoPath)
           yield* git("create", input.repoPath, "worktree", "add", "-b", branch, path, baseCommit)
-          return { ...input, baseCommit, path, branch }
+          return { ...input, baseCommit, path, branch, targetBranch }
         }),
 
       restore: (input) =>
@@ -160,6 +183,7 @@ export const WorkspaceManagerLive = Layer.effect(
             repoPath: input.repoPath,
             path,
             branch: input.branch,
+            targetBranch: input.targetBranch,
             baseCommit,
           }
         }),
@@ -240,6 +264,23 @@ export class CheckpointService extends Context.Tag("cockpit/CheckpointService")<
         readonly attemptId: AttemptId
       },
     ) => Effect.Effect<CheckpointId | undefined, WorkspaceError | JournalError>
+    /**
+     * Turns the run's success checkpoints into a clean result on the target branch (plan §9).
+     * Salvage commits are left behind: they record what a failed attempt was holding, which is
+     * evidence for the run, not something the branch should carry.
+     *
+     * Each new commit reuses a checkpoint's tree wholesale, so nothing is ever checked out to
+     * build one and no merge can conflict. The branch then moves by compare-and-swap; when it is
+     * the checked-out one, the working tree is carried to it as well — plan §9 keeps the user's
+     * copy untouched *until* finalize, not through it. The cost of taking trees wholesale is that
+     * the branch must not have moved since the run pinned its base, and finalize refuses rather
+     * than reverting whoever moved it. It also refuses a repository mid-operation, a branch held
+     * by another worktree, and a checkout with uncommitted work.
+     */
+    readonly finalize: (
+      workspace: Workspace,
+      input: FinalizeInput,
+    ) => Effect.Effect<FinalizeResult, WorkspaceError | JournalError>
   }
 >() {}
 
@@ -365,6 +406,157 @@ export const CheckpointServiceLive = Layer.effect(
         (since === undefined ? changed(workspace) : changedSince(workspace, since)).pipe(
           gitLock.withPermits(1),
         ),
+
+      finalize: (workspace, input) =>
+        Effect.gen(function* () {
+          const refuse = (detail: string) => new WorkspaceError({ op: "finalize", detail })
+          const repo = workspace.repoPath
+          const target = input.targetBranch
+          if (target === undefined) {
+            return yield* refuse(
+              `run ${workspace.runId} predates target-branch tracking, so the branch it started from is unknown; finalize it by hand from ${workspace.branch}`,
+            )
+          }
+          if (target === "HEAD") {
+            return yield* refuse(
+              `run ${workspace.runId} started from a detached checkout, so there is no branch to finalize onto`,
+            )
+          }
+
+          // A repository mid-rebase, mid-merge, mid-cherry-pick or mid-bisect has a sequencer
+          // holding state about where HEAD is going; moving a branch under it corrupts the
+          // operation the user is halfway through.
+          const markers = ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "BISECT_LOG"]
+          const paths = yield* git(
+            "finalize",
+            repo,
+            "rev-parse",
+            ...markers.flatMap((marker) => ["--git-path", marker]),
+          )
+          const inProgress = paths
+            .split("\n")
+            .flatMap((path, at) =>
+              existsSync(NodePath.resolve(repo, path.trim())) ? [markers[at]] : [],
+            )
+          if (inProgress.length > 0) {
+            return yield* refuse(
+              `${repo} has an operation in progress (${inProgress.join(", ")}); finish or abort it before finalizing`,
+            )
+          }
+
+          const ref = `refs/heads/${target}`
+          const tip = yield* git("finalize", repo, "rev-parse", "--verify", `${ref}^{commit}`)
+          // Each finalized commit carries a checkpoint's whole tree, so a branch that moved on
+          // since the run pinned its base would have that newer work reverted by the replay.
+          if (tip !== workspace.baseCommit) {
+            return yield* refuse(
+              `${target} is at ${tip}, not the ${workspace.baseCommit} this run branched from; rebase the run or start a new one rather than overwrite it`,
+            )
+          }
+
+          // The main checkout is the one finalize knows how to carry along. Any other worktree
+          // holding the branch would be left pointing at a commit its files never saw.
+          const held = (yield* git("finalize", repo, "worktree", "list", "--porcelain"))
+            .split("\n\n")
+            .flatMap((record) => {
+              const path = /^worktree (.+)$/m.exec(record)?.[1]
+              return path !== undefined && record.includes(`\nbranch ${ref}`) ? [path] : []
+            })
+            .filter((path) => realpathSync(path) !== realpathSync(repo))
+          if (held.length > 0) {
+            return yield* refuse(
+              `${target} is checked out in another worktree (${held.join(", ")}); finalize would move it out from under that checkout`,
+            )
+          }
+
+          // A checked-out target is carried along rather than having its ref moved underneath it,
+          // so ref, index and working tree arrive together. That needs a clean tree: git would
+          // refuse to overwrite uncommitted work, and this says so before any commit is built.
+          const head = yield* git("finalize", repo, "rev-parse", "--abbrev-ref", "HEAD")
+          const checkedOut = head === target
+          if (checkedOut) {
+            const dirty = yield* git("finalize", repo, "status", "--porcelain")
+            if (dirty !== "") {
+              return yield* refuse(
+                `${target} is checked out with uncommitted changes; commit or stash them before finalizing`,
+              )
+            }
+          }
+
+          const rows = yield* sql<{ id: string }>`
+            SELECT id FROM checkpoints
+            WHERE run_id = ${workspace.runId} AND kind = ${"success"}
+            ORDER BY rowid`.pipe(
+            Effect.mapError((cause) =>
+              refuse(`reading the checkpoints of run ${workspace.runId}: ${cause.message}`),
+            ),
+          )
+          const chain = input.mode === "squash" ? rows.slice(-1) : rows
+          let parent = tip
+          let landed = 0
+          for (const row of chain) {
+            const tree = yield* git("finalize", repo, "rev-parse", `${row.id}^{tree}`)
+            // Checkpoints are taken with --allow-empty, and every run opens with a baseline one.
+            // Replaying those would put commits that change nothing on the user's branch.
+            if (tree === (yield* git("finalize", repo, "rev-parse", `${parent}^{tree}`))) continue
+            const message =
+              input.mode === "squash"
+                ? `cockpit: run ${workspace.runId}`
+                : yield* git("finalize", repo, "log", "-1", "--format=%B", row.id)
+            parent = yield* git(
+              "finalize",
+              repo,
+              "-c",
+              "commit.gpgsign=false",
+              "-c",
+              "user.name=Cockpit",
+              "-c",
+              "user.email=cockpit@localhost",
+              "commit-tree",
+              tree,
+              "-p",
+              parent,
+              "-m",
+              message,
+            )
+            landed += 1
+          }
+          // On the checked-out branch `reset` is what moves ref, index and working tree together —
+          // moving the ref first would leave reset with nothing to do, since HEAD follows the
+          // branch. `--keep` makes git refuse rather than clobber an edit that landed in the
+          // window, and it is chosen over `merge --ff-only` because that fires the repository's
+          // post-merge hook for a merge the user never asked for.
+          // ponytail: no compare-and-swap on that path; the tip was read under this same git lock.
+          // Swap in a plumbing sequence if runs ever share a repository with another writer.
+          const moveTo = (to: string, from: string) =>
+            checkedOut
+              ? git("finalize", repo, "reset", "--keep", to)
+              : git("finalize", repo, "update-ref", ref, to, from)
+
+          // A run that changed no file lands nothing, which is an outcome rather than a failure:
+          // the branch stays where it is and the journal still records that finalize ran.
+          if (landed > 0) yield* moveTo(parent, tip)
+          yield* journal
+            .append({
+              runId: workspace.runId,
+              payload: {
+                _tag: "RunFinalized",
+                targetBranch: target,
+                mode: input.mode,
+                commit: parent,
+                commits: landed,
+                previousTip: tip,
+              },
+            })
+            // A branch moved without the record explaining why is the one outcome worse than not
+            // finalizing at all.
+            .pipe(
+              Effect.onError(() =>
+                landed === 0 ? Effect.void : Effect.ignore(moveTo(tip, parent)),
+              ),
+            )
+          return { commit: parent, commits: landed }
+        }).pipe(gitLock.withPermits(1)),
     }
   }),
 )

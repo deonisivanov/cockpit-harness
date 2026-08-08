@@ -1,7 +1,9 @@
 import { SqlClient } from "@effect/sql"
+import { SqliteClient } from "@effect/sql-sqlite-node"
 import { Context, Effect, Exit, Fiber, Stream } from "effect"
+import * as NodePath from "node:path"
 import { expect, it } from "vitest"
-import { AttemptId, BlockId, CheckpointId, EventBus, Journal, RunId } from "../src/index.js"
+import { AttemptId, BlockId, CheckpointId, EventBus, Journal, RunId, Store } from "../src/index.js"
 import { payloads, readEvents, runKernel, tempHome, withKernel } from "./helpers.js"
 
 type JournalService = Context.Tag.Service<typeof Journal>
@@ -18,6 +20,16 @@ it("creates every contract table and stays idempotent across boots", async () =>
   ).pipe(Effect.map((rows) => rows.map((row) => row.name).sort()))
 
   const boot = () => runKernel(home, tables)
+
+  // Every journal reaches the current shape the same way, fresh or upgraded: 0001 forward.
+  const applied = await runKernel(
+    home,
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ name: string }>`SELECT name FROM effect_sql_migrations ORDER BY migration_id`,
+    ),
+  )
+  expect(applied.map((row) => row.name)).toEqual(["initial", "target_branch", "run_scoped_blocks"])
 
   const first = await boot()
   expect(first).toEqual(
@@ -435,4 +447,197 @@ it("publishes committed events to event bus subscribers", async () => {
 
   expect(payloads(received)).toEqual(["RunCreated", "RunStarted"])
   expect(received.map((event) => event.seq)).toEqual([1, 2])
+})
+
+it("gives every run its own block namespace, so two runs share block ids without colliding", async () => {
+  const second = RunId.make("run-2")
+  const loopId = BlockId.make("block-1#2")
+
+  const [blocks, attempts] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const sql = yield* SqlClient.SqlClient
+
+      for (const id of [runId, second]) {
+        yield* journal.createRun({ runId: id, projectId: "p", prompt: "x" })
+        yield* journal.startRun(id)
+        // The same instance id in both runs, plus a loop iteration's `#2` inside each.
+        for (const block of [blockId, loopId]) {
+          yield* journal.startBlock({ runId: id, blockId: block, defId: "d", kind: "agent" })
+          yield* journal.startAttempt({
+            runId: id,
+            blockId: block,
+            attemptId: AttemptId.make(`attempt-${id}-${block}`),
+            number: 1,
+          })
+          yield* journal.finishAttempt({
+            runId: id,
+            blockId: block,
+            attemptId: AttemptId.make(`attempt-${id}-${block}`),
+            verdict: "success",
+          })
+          yield* journal.finishBlock(id, block, "succeeded")
+        }
+      }
+
+      return [
+        yield* sql<{ run_id: string; id: string; status: string }>`
+          SELECT run_id, id, status FROM blocks ORDER BY run_id, id`,
+        yield* sql<{ run_id: string; block_id: string }>`
+          SELECT run_id, block_id FROM attempts ORDER BY run_id, block_id`,
+      ] as const
+    }),
+  )
+
+  expect(blocks.map((row) => `${row.run_id}/${row.id}`)).toEqual([
+    "run-1/block-1",
+    "run-1/block-1#2",
+    "run-2/block-1",
+    "run-2/block-1#2",
+  ])
+  // Finishing run-2's block must not have closed run-1's block of the same name.
+  expect(blocks.every((row) => row.status === "succeeded")).toBe(true)
+  expect(attempts.map((row) => `${row.run_id}/${row.block_id}`)).toEqual([
+    "run-1/block-1",
+    "run-1/block-1#2",
+    "run-2/block-1",
+    "run-2/block-1#2",
+  ])
+})
+
+it("still refuses a block id the same run already used", async () => {
+  const exit = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "agent" })
+      return yield* Effect.exit(
+        journal.startBlock({ runId, blockId, defId: "d", kind: "agent" }),
+      )
+    }),
+  )
+
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(String(exit)).toContain("already has a block")
+})
+
+it("keeps an attempt from hanging off a block in another run", async () => {
+  const second = RunId.make("run-2")
+
+  const exit = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      const sql = yield* SqlClient.SqlClient
+      for (const id of [runId, second]) {
+        yield* journal.createRun({ runId: id, projectId: "p", prompt: "x" })
+        yield* journal.startRun(id)
+      }
+      yield* journal.startBlock({ runId, blockId, defId: "d", kind: "agent" })
+      // run-2 has no such block, so the composite foreign key is what refuses this row.
+      return yield* Effect.exit(sql`
+        INSERT INTO attempts (id, run_id, block_id, number)
+        VALUES (${attemptId}, ${second}, ${blockId}, ${1})`)
+    }),
+  )
+
+  expect(Exit.isFailure(exit)).toBe(true)
+})
+
+/**
+ * A journal written before the block key became run-scoped: the tables 0003 rebuilds, in the shape
+ * 0001 and 0002 left them, with the migrator's own bookkeeping saying those two already ran.
+ */
+const legacyJournal = (home: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE effect_sql_migrations (
+      migration_id integer PRIMARY KEY NOT NULL,
+      created_at datetime NOT NULL DEFAULT current_timestamp,
+      name VARCHAR(255) NOT NULL
+    )`
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+      VALUES (${1}, ${"initial"}), (${2}, ${"target_branch"})`
+    yield* sql`CREATE TABLE runs (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      base_commit TEXT, worktree_path TEXT, branch TEXT, provider_versions_json TEXT,
+      plugin_versions_json TEXT, cartridge_hash TEXT, canonical_session_id TEXT,
+      created_at TEXT NOT NULL, finished_at TEXT, target_branch TEXT
+    )`
+    yield* sql`CREATE TABLE blocks (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs (id), def_id TEXT NOT NULL,
+      kind TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, finished_at TEXT
+    )`
+    yield* sql`CREATE TABLE attempts (
+      id TEXT PRIMARY KEY, block_id TEXT NOT NULL REFERENCES blocks (id), number INTEGER NOT NULL,
+      session_id TEXT, verdict TEXT, result_json TEXT, started_at TEXT, finished_at TEXT
+    )`
+    yield* sql`CREATE INDEX blocks_run ON blocks (run_id)`
+    yield* sql`CREATE INDEX attempts_block ON attempts (block_id)`
+    yield* sql`CREATE TABLE events (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES runs (id),
+      block_id TEXT, attempt_id TEXT, ts TEXT NOT NULL, payload_json TEXT NOT NULL
+    )`
+    yield* sql`CREATE INDEX events_run_seq ON events (run_id, seq)`
+
+    yield* sql`INSERT INTO runs (id, project_id, prompt, status, created_at)
+      VALUES (${runId}, ${"p"}, ${"the run that came before"}, ${"succeeded"}, ${"2026-01-01T00:00:00.000Z"})`
+    yield* sql`INSERT INTO blocks (id, run_id, def_id, kind, status, started_at)
+      VALUES (${blockId}, ${runId}, ${"d"}, ${"agent"}, ${"succeeded"}, ${"2026-01-01T00:00:01.000Z"})`
+    yield* sql`INSERT INTO attempts (id, block_id, number, verdict)
+      VALUES (${attemptId}, ${blockId}, ${1}, ${"success"})`
+  }).pipe(
+    Effect.provide(SqliteClient.layer({ filename: NodePath.join(home, "cockpit.db") })),
+    Effect.scoped,
+    Effect.orDie,
+  )
+
+it("upgrades a journal written before blocks were run-scoped, keeping its rows", async () => {
+  const home = await tempHome()
+  await Effect.runPromise(legacyJournal(home))
+
+  const [applied, blocks, attempts, second, schema] = await runKernel(
+    home,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const store = yield* Store
+      const journal = yield* Journal
+
+      // The block the legacy run owned is now addressable by the id that used to be free.
+      const other = RunId.make("run-2")
+      yield* journal.createRun({ runId: other, projectId: "p", prompt: "after the upgrade" })
+      yield* journal.startRun(other)
+      yield* journal.startBlock({ runId: other, blockId, defId: "d", kind: "agent" })
+      yield* journal.startAttempt({
+        runId: other,
+        blockId,
+        attemptId: AttemptId.make("attempt-2"),
+        number: 1,
+      })
+
+      return [
+        yield* sql<{ migration_id: number; name: string }>`
+          SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`,
+        yield* store.blocks(runId),
+        yield* store.attempts(runId, blockId),
+        yield* store.blocks(other),
+        yield* sql<{ sql: string }>`
+          SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ${"attempts"}`,
+      ] as const
+    }),
+  )
+
+  expect(applied).toEqual([
+    { migration_id: 1, name: "initial" },
+    { migration_id: 2, name: "target_branch" },
+    { migration_id: 3, name: "run_scoped_blocks" },
+  ])
+
+  // The pre-upgrade rows survived the rebuild, and the attempt gained the run it always belonged to.
+  expect(blocks).toMatchObject([{ id: blockId, defId: "d", status: "succeeded" }])
+  expect(attempts).toMatchObject([{ id: attemptId, runId, blockId, number: 1, verdict: "success" }])
+  expect(second).toMatchObject([{ id: blockId, status: "running" }])
+  // The rename is what repoints the child's REFERENCES clause; a leftover `blocks_new` would only
+  // surface later, as an insert failing against a table that no longer exists.
+  expect(schema[0].sql).toMatch(/REFERENCES "?blocks"? \(run_id, id\)/)
 })

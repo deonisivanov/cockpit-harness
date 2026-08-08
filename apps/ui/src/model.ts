@@ -14,7 +14,7 @@ export type RunStatus =
 
 export type BlockStatus = "running" | "succeeded" | "failed" | "skipped" | "interrupted"
 
-export type BlockKind = "agent" | "command"
+export type BlockKind = "agent" | "command" | "workspace"
 
 export type AttemptVerdict =
   | "success"
@@ -136,6 +136,14 @@ export type EventPayload =
       readonly criteria: ReadonlyArray<CriterionResult>
     }
   | { readonly _tag: "FailureFeedbackForwarded"; readonly packetRef: string }
+  | {
+      readonly _tag: "RunFinalized"
+      readonly targetBranch: string
+      readonly mode: "squash" | "ordered"
+      readonly commit: string
+      readonly commits: number
+      readonly previousTip: string
+    }
 
 export type EventTag = EventPayload["_tag"]
 
@@ -214,6 +222,26 @@ export interface TerminalHandoff {
   readonly sessionId: string
   readonly warning?: string
   readonly briefPath?: string
+}
+
+export type InsightTarget = "core" | "cartridge"
+
+export interface InsightEvidence {
+  readonly kind: string
+  readonly ref: string
+}
+
+/** A row of the insights table (contracts §10); `lastSeenAt` is when its newest run ended. */
+export interface Insight {
+  readonly id: string
+  readonly target: InsightTarget
+  readonly title: string
+  readonly body: string
+  readonly evidence: ReadonlyArray<InsightEvidence>
+  readonly occurrences: number
+  readonly firstSeenRun: string | null
+  readonly lastSeenRun: string | null
+  readonly lastSeenAt: string | null
 }
 
 /** Assembled client-side: the row from `/artifacts/:id`, the body from `/artifacts/:id/raw`. */

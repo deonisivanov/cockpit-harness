@@ -1,11 +1,14 @@
 import { Effect, Stream } from "effect"
-import { readFile } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { readFile, writeFile } from "node:fs/promises"
+import * as NodePath from "node:path"
 import { expect, it } from "vitest"
 import {
   agentTask,
   ArtifactId,
   correctivePolicy,
   EventSeq,
+  finalize,
   Journal,
   verifyOutput,
 } from "../src/index.js"
@@ -131,3 +134,63 @@ it("recovers from a semantic failure and finishes the run", async () => {
   expect(replayed).toEqual(events.slice(5).map((event) => event.seq))
   expect(events.at(-1)?.payload).toMatchObject({ _tag: "RunFinished", status: "succeeded" })
 }, 60_000)
+
+it("lands the run's work on the target branch through a finalize block", async () => {
+  const result = await withEngine(
+    { "agent-task": { output: { summary: "wrote the feature" }, writes: { "feature.ts": "export const x = 1\n" } } },
+    ({ runId, start, workspace }) =>
+      Effect.gen(function* () {
+        const outcome = yield* start({
+          _tag: "Sequence",
+          children: [block("implement", agentTask.id), block("finalize", finalize.id)],
+        })
+        return { outcome, workspace, events: yield* readEvents(runId) }
+      }),
+  )
+
+  const { repoPath, targetBranch, baseCommit } = result.workspace
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, encoding: "utf8" }).trim()
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(targetBranch).toBe("main")
+  expect(git("rev-parse", `${targetBranch}^`)).toBe(baseCommit)
+  expect(await readFile(NodePath.join(repoPath, "feature.ts"), "utf8")).toBe("export const x = 1\n")
+
+  const [landed] = of(result.events, "RunFinalized")
+  expect(landed?.payload).toMatchObject({ targetBranch: "main", mode: "squash", commits: 1 })
+  // A workspace block writes nothing of its own, so it earns no checkpoint of its own either:
+  // the baseline and the implement block are the only two, and both precede the finalize.
+  const commits = of(result.events, "CheckpointCreated")
+  expect(commits).toHaveLength(2)
+  expect(commits.every((event) => event.seq < landed!.seq)).toBe(true)
+})
+
+it("fails the finalize block, with the reason, when the target branch cannot take the result", async () => {
+  const result = await withEngine(
+    { "agent-task": { output: { summary: "wrote the feature" }, writes: { "feature.ts": "x\n" } } },
+    ({ runId, start, workspace }) =>
+      Effect.gen(function* () {
+        // The owner is mid-edit on the branch the run started from.
+        yield* Effect.promise(() =>
+          writeFile(NodePath.join(workspace.repoPath, "app.txt"), "mid-edit\n"),
+        )
+        const outcome = yield* start({
+          _tag: "Sequence",
+          children: [block("implement", agentTask.id), block("finalize", finalize.id)],
+        })
+        return { outcome, workspace, events: yield* readEvents(runId) }
+      }),
+  )
+
+  const { repoPath, baseCommit } = result.workspace
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repoPath, encoding: "utf8" }).trim()
+
+  expect(result.outcome.status).toBe("failed")
+  expect(of(result.events, "RunFinalized")).toHaveLength(0)
+  expect(git("rev-parse", "main")).toBe(baseCommit)
+  expect(await readFile(NodePath.join(repoPath, "app.txt"), "utf8")).toBe("mid-edit\n")
+  const [failed] = of(result.events, "AttemptFinished").filter(
+    (event) => event.payload.verdict === "semantic-failure",
+  )
+  expect(failed).toBeDefined()
+})
