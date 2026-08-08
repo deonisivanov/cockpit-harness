@@ -189,6 +189,8 @@ export function describe(payload: EventPayload): EventView {
       return { tag: "attempt", tone: payload.verdict === "success" ? "green" : "red", summary: `attempt ${payload.verdict}`, ...none }
     case "BlockSkipped":
       return { tag: "block", tone: "slate", summary: `skipped · ${payload.reason}`, ...none }
+    case "BlockSkipRequested":
+      return { tag: "block", tone: "amber", summary: `skip requested · ${payload.nodeId}`, ...none }
     case "BlockReplayed":
       return { tag: "resume", tone: "amber", summary: `not re-executed · ${payload.reason}`, ...none }
     case "RunResumed":

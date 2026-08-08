@@ -27,6 +27,7 @@ export interface Source extends EventSource {
   ): Promise<void>
   cancel(runId: string): Promise<void>
   stop(runId: string): Promise<void>
+  skipBlock(runId: string, blockId: string): Promise<void>
   /** Re-enters an interrupted or failed run; what it already finished is not executed again. */
   resume(runId: string): Promise<void>
   openTerminal(runId: string): Promise<TerminalHandoff>
@@ -74,6 +75,7 @@ export const httpSource: Source = {
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),
   stop: (runId) => post<void>(`/runs/${runId}/stop`),
+  skipBlock: (runId, blockId) => post<void>(`/runs/${runId}/blocks/${blockId}/skip`),
   resume: (runId) => post<void>(`/runs/${runId}/resume`),
   openTerminal: (runId) => post<TerminalHandoff>(`/runs/${runId}/terminal`),
   insights: (target) =>

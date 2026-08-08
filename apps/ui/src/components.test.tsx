@@ -157,6 +157,7 @@ describe("Tree", () => {
       state={state}
       selected={null}
       onSelect={() => {}}
+      onSkip={() => {}}
       onClose={() => {}}
       floating={false}
     />,
@@ -182,6 +183,7 @@ describe("Tree", () => {
         state={state}
         selected={null}
         onSelect={() => {}}
+        onSkip={() => {}}
         onClose={() => {}}
         floating={false}
       />,
@@ -196,6 +198,24 @@ describe("Tree", () => {
     expect(html).toContain('data-status="running"')
   })
 
+  it("offers skip on a pending block only", () => {
+    const idle = renderToStaticMarkup(
+      <Tree
+        detail={detail}
+        state={applyEvents(emptyRunState(), [ev({ _tag: "RunStarted" })])}
+        selected={null}
+        onSelect={() => {}}
+        onSkip={() => {}}
+        onClose={() => {}}
+        floating={false}
+      />,
+    )
+    // Every block is still pending, so each carries the affordance; the gate does not.
+    expect(idle.match(/data-testid="skip-block"/g)).toHaveLength(2)
+    // The started fixture: explore is done and implement is running — neither is skippable.
+    expect(html).not.toContain('data-testid="skip-block"')
+  })
+
   it("dims a skipped block", () => {
     const skipped = applyEvents(state, [ev({ _tag: "BlockSkipped", reason: "n/a" }, "implement")])
     const out = renderToStaticMarkup(
@@ -204,6 +224,7 @@ describe("Tree", () => {
         state={skipped}
         selected={null}
         onSelect={() => {}}
+        onSkip={() => {}}
         onClose={() => {}}
         floating={false}
       />,

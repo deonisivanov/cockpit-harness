@@ -204,6 +204,21 @@ const cancelRun = Effect.gen(function* () {
       )
 })
 
+const skipBlock = Effect.gen(function* () {
+  const supervisor = yield* RunSupervisor
+  const runId = RunId.make(yield* pathParam("id"))
+  const nodeId = yield* pathParam("blockId")
+  const decision = yield* supervisor.skip(runId, nodeId)
+  switch (decision._tag) {
+    case "unknown":
+      return yield* problem(404, "not found", `run ${runId}`)
+    case "refused":
+      return yield* problem(409, "skip refused", decision.detail)
+    case "accepted":
+      return yield* ok({ ok: true }, 202)
+  }
+})
+
 const stopRun = Effect.gen(function* () {
   const store = yield* Store
   const supervisor = yield* RunSupervisor
@@ -435,6 +450,7 @@ export const apiRoutes = (
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))
     yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
     yield* router.post("/api/runs/:id/stop", route(respond(stopRun)))
+    yield* router.post("/api/runs/:id/blocks/:blockId/skip", route(respond(skipBlock)))
     yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
     yield* router.post("/api/runs/:id/retrospective", route(respond(runRetrospective)))
     yield* router.post("/api/runs/:id/resume", route(respond(resumeRun)))

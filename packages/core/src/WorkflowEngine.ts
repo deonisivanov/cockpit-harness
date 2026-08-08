@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Either, Exit, HashMap, Layer, Ref } from "effect"
+import { Context, Deferred, Effect, Either, Exit, HashMap, HashSet, Layer, Ref } from "effect"
 import { randomUUID } from "node:crypto"
 import { mkdir, readFile, rm } from "node:fs/promises"
 import * as NodePath from "node:path"
@@ -57,6 +57,8 @@ export interface RunRequest {
    * than executed, and its loops carry on where they stopped. Absent for a first execution.
    */
   readonly resume?: ResumePlan
+  /** Skip requests recorded before this execution started; live ones arrive via requestSkip. */
+  readonly skips?: ReadonlySet<string>
 }
 
 export interface RunOutcome {
@@ -88,6 +90,8 @@ export class WorkflowEngine extends Context.Tag("cockpit/WorkflowEngine")<
       blockId: BlockId,
       answer: string,
     ) => Effect.Effect<void, JournalError>
+    /** Records that the node's next visit is to be skipped; consumed at that visit. */
+    readonly requestSkip: (runId: RunId, nodeId: BlockId) => Effect.Effect<void>
   }
 >() {}
 
@@ -255,6 +259,9 @@ export const WorkflowEngineLive = Layer.effect(
       HashMap.empty<string, Deferred.Deferred<{ approved: boolean; note?: string }>>(),
     )
     const questions = yield* Ref.make(HashMap.empty<string, Deferred.Deferred<string>>())
+    // Keyed and cleared per run like the two above: a stale entry would swallow a same-named
+    // node in a later run.
+    const skips = yield* Ref.make(HashSet.empty<string>())
     const pendingKey = (runId: RunId, blockId: BlockId) => `${runId}:${blockId}`
 
     /**
@@ -346,6 +353,13 @@ export const WorkflowEngineLive = Layer.effect(
         const plan = request.resume
         // A resumed run was re-opened by whoever reconciled its worktree; it is already running.
         if (plan === undefined) yield* journal.startRun(runId)
+
+        yield* Ref.update(skips, (set) =>
+          [...(request.skips ?? []), ...(plan?.skips ?? [])].reduce(
+            (acc, nodeId) => HashSet.add(acc, pendingKey(runId, BlockId.make(nodeId))),
+            set,
+          ),
+        )
 
         // Rollback needs a target from the first attempt onward, and recovery treats the newest
         // success checkpoint as the resume point — so the run opens with one. A re-entering run
@@ -617,13 +631,25 @@ export const WorkflowEngineLive = Layer.effect(
                 new JournalError({ op: "writeArtifact", detail: `run dir: ${String(cause)}` }),
             })
 
-            const envelope = yield* envelopeFor({
-              def,
-              node,
-              blockId,
-              attemptId,
-              feedback: input.feedback,
-            })
+            // A missing required input is a semantic verdict, not an engine crash: it must fail
+            // the attempt with a packet, exactly like a contract violation after the session.
+            // Reachable through a Condition branch that never ran, a plugin Skip resolution, a
+            // resume over a skipped block, and a user skip.
+            const built = yield* Effect.either(
+              envelopeFor({ def, node, blockId, attemptId, feedback: input.feedback }),
+            )
+            if (built._tag === "Left") {
+              if (built.left._tag !== "ValidationError") return yield* Effect.fail(built.left)
+              return {
+                failed: true,
+                whatFailed: [built.left.message],
+                assistantText: "",
+                actionsTaken: [],
+                commandsRun: [],
+                diagnostics: [],
+              } satisfies Judged
+            }
+            const envelope = built.right
             const prompt = composePrompt({
               def,
               binding: input.binding,
@@ -1036,6 +1062,25 @@ export const WorkflowEngineLive = Layer.effect(
             }
 
             const blockId = yield* instanceId(node.id)
+
+            // Mirrors the preflight Skip below; consumed here, so a loop's next iteration runs.
+            const requested = yield* Ref.modify(skips, (set) => {
+              const key = pendingKey(runId, node.id)
+              return HashSet.has(set, key)
+                ? ([true, HashSet.remove(set, key)] as const)
+                : ([false, set] as const)
+            })
+            if (requested) {
+              yield* journal.skipBlock({
+                runId,
+                blockId,
+                defId: def.id,
+                kind: def.kind,
+                reason: "skipped by user request",
+              })
+              return { verdict: "success" } satisfies AttemptOutcome
+            }
+
             const timeoutMs = node.overrides?.timeoutMs ?? def.timeoutMs
 
             // Command blocks reach no provider and no plugin, so there is nothing to preflight.
@@ -1382,7 +1427,11 @@ export const WorkflowEngineLive = Layer.effect(
         yield* journal.finishRun(runId, status)
         const final = yield* Ref.get(state)
         return { status, outputs: final.outputs } satisfies RunOutcome
-      })
+      }).pipe(
+        Effect.ensuring(
+          Ref.update(skips, HashSet.filter((key) => !key.startsWith(`${request.runId}:`))),
+        ),
+      )
 
     return {
       run,
@@ -1407,6 +1456,9 @@ export const WorkflowEngineLive = Layer.effect(
             `run ${runId} has no question awaiting an answer on block ${blockId}`,
           ),
         ),
+
+      requestSkip: (runId, nodeId) =>
+        Ref.update(skips, HashSet.add(pendingKey(runId, nodeId))),
     }
   }),
 )

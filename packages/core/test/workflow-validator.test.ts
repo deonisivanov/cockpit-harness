@@ -6,6 +6,7 @@ import {
   RunId,
   runCommand,
   singleAttemptPolicy,
+  skipBreaksContract,
   validateWorkflow,
   verifyOutput,
   WorkflowCatalog,
@@ -420,4 +421,37 @@ it("names the offending node in the path", () => {
 
   expect(errors).toHaveLength(1)
   expect(errors[0].path).toEqual(["root", "children[1]", "second"])
+})
+
+it("skipBreaksContract refuses a skip that starves a required input", () => {
+  const broken = skipBreaksContract(tree(implementThenVerify), catalog(), id("implement"))
+
+  expect(broken.map((error) => error.rule)).toContain("input-contract")
+  expect(broken[0].path).toContain("verify")
+})
+
+it("skipBreaksContract allows a skip nothing downstream depends on", () => {
+  const safe = tree({
+    _tag: "Sequence",
+    children: [block("implement", agentTask.id), commandNode],
+  })
+
+  expect(skipBreaksContract(safe, catalog(), id("implement"))).toEqual([])
+})
+
+it("skipBreaksContract refuses removing a Condition's predicate source", () => {
+  const conditioned = tree({
+    _tag: "Sequence",
+    children: [
+      block("implement", agentTask.id),
+      {
+        _tag: "Condition",
+        predicate: { blockId: id("implement"), path: ["summary"], comparator: "exists" },
+        onTrue: block("after", agentTask.id),
+      },
+    ],
+  })
+  const broken = skipBreaksContract(conditioned, catalog(), id("implement"))
+
+  expect(broken.map((error) => error.rule)).toContain("condition-predicate")
 })

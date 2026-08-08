@@ -3,7 +3,17 @@ import { SqliteClient } from "@effect/sql-sqlite-node"
 import { Context, Effect, Exit, Fiber, Stream } from "effect"
 import * as NodePath from "node:path"
 import { expect, it } from "vitest"
-import { AttemptId, BlockId, CheckpointId, EventBus, Journal, RunId, Store } from "../src/index.js"
+import {
+  AttemptId,
+  BlockId,
+  buildResumePlan,
+  CheckpointId,
+  EventBus,
+  Journal,
+  recordedSkips,
+  RunId,
+  Store,
+} from "../src/index.js"
 import { payloads, readEvents, runKernel, tempHome, withKernel } from "./helpers.js"
 
 type JournalService = Context.Tag.Service<typeof Journal>
@@ -222,6 +232,48 @@ it("skips a block and cancels the run without touching attempts", async () => {
   expect(status).toBe("cancelled")
   expect(payloads(events)).toEqual(["RunCreated", "RunStarted", "BlockSkipped", "RunCancelled"])
   expect(events[2].payload).toMatchObject({ reason: "toggled off by the analyzer" })
+})
+
+it("recordedSkips pends a request until the node's next visit, across instance suffixes", async () => {
+  const trail = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.append({
+        runId,
+        payload: { _tag: "BlockSkipRequested", nodeId: "implement" },
+      })
+      const pending = recordedSkips(yield* readEvents(runId))
+      // The same fold feeds re-entry, so a fresh start and a resume agree on what is pending.
+      const planned = [...(yield* buildResumePlan(runId)).skips]
+      yield* journal.skipBlock({
+        runId,
+        blockId: BlockId.make("implement"),
+        defId: "agent-task",
+        kind: "agent",
+        reason: "skipped by user request",
+      })
+      const consumed = recordedSkips(yield* readEvents(runId))
+      yield* journal.append({
+        runId,
+        payload: { _tag: "BlockSkipRequested", nodeId: "implement" },
+      })
+      yield* journal.startBlock({
+        runId,
+        blockId: BlockId.make("implement#2"),
+        defId: "agent-task",
+        kind: "agent",
+      })
+      const consumedBySuffix = recordedSkips(yield* readEvents(runId))
+      return { pending, planned, consumed, consumedBySuffix }
+    }),
+  )
+
+  expect([...trail.pending]).toEqual(["implement"])
+  expect(trail.planned).toEqual(["implement"])
+  expect(trail.consumed.size).toBe(0)
+  expect(trail.consumedBySuffix.size).toBe(0)
 })
 
 it("closes a stopped run as interrupted, and resume re-opens it", async () => {

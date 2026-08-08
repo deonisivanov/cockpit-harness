@@ -49,11 +49,12 @@ export interface TreeProps {
   readonly state: RunState
   readonly selected: string | null
   readonly onSelect: (blockId: string | null) => void
+  readonly onSkip: (blockId: string) => void
   readonly onClose: () => void
   readonly floating: boolean
 }
 
-export function Tree({ detail, state, selected, onSelect, onClose, floating }: TreeProps) {
+export function Tree({ detail, state, selected, onSelect, onSkip, onClose, floating }: TreeProps) {
   const rows = useMemo(() => (detail?.tree ? flattenTree(detail.tree.root) : []), [detail])
 
   return (
@@ -97,6 +98,7 @@ export function Tree({ detail, state, selected, onSelect, onClose, floating }: T
               policies={detail?.retryPolicies}
               selected={selected}
               onSelect={onSelect}
+              onSkip={onSkip}
             />
           ))
         )}
@@ -111,12 +113,14 @@ function TreeNode({
   policies,
   selected,
   onSelect,
+  onSkip,
 }: {
   row: TreeRow
   state: RunState
   policies?: RetryPolicies
   selected: string | null
   onSelect: (id: string | null) => void
+  onSkip: (id: string) => void
 }) {
   if (row.kind === "loop") {
     const loop = loopIndicator(row, state, policies)
@@ -174,9 +178,14 @@ function TreeNode({
   const isSelected = selected === row.id
   const label = isGate ? row.title : row.id
   const badge = isGate ? "human-gate" : row.def
+  const skippable =
+    !isGate &&
+    status === "pending" &&
+    state.runStatus !== "succeeded" &&
+    state.runStatus !== "cancelled"
 
   return (
-    <>
+    <div className="group relative">
       <button
         type="button"
         data-testid="tree-node"
@@ -217,6 +226,18 @@ function TreeNode({
         )}
       </button>
 
+      {skippable && (
+        <button
+          type="button"
+          data-testid="skip-block"
+          title="Skip this block's next visit; refused if a later block requires its output"
+          onClick={() => onSkip(row.id)}
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm border border-white/10 bg-panel px-1.5 font-mono text-[9.5px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 hover:border-amber/40 hover:text-amber"
+        >
+          skip
+        </button>
+      )}
+
       {attempts.length > 1 &&
         attempts.map((a) => (
           <div
@@ -241,6 +262,6 @@ function TreeNode({
             <span className="text-ink-5">{durationOf(a.startedAt, a.finishedAt)}</span>
           </div>
         ))}
-    </>
+    </div>
   )
 }

@@ -91,6 +91,8 @@ const commandResult: ReadonlyArray<ContractField> = [
 export const validateWorkflow = (
   tree: WorkflowTree,
   catalog: WorkflowCatalog,
+  /** A node to walk but never admit into `available` — the shape of it having been skipped. */
+  suppressed?: BlockId,
 ): ReadonlyArray<ValidationError> => {
   const defs = new Map(catalog.blocks.map((def) => [def.id, def]))
   const policies = new Map(catalog.policies.map((policy) => [policy.id, policy]))
@@ -212,7 +214,7 @@ export const validateWorkflow = (
     switch (node._tag) {
       case "Block":
         visitBlock(node, path, available)
-        return new Set([node.id])
+        return node.id === suppressed ? new Set() : new Set([node.id])
 
       case "Sequence": {
         const produced = new Set<BlockId>()
@@ -352,4 +354,22 @@ export const validateWorkflow = (
 
   visit(tree.root, ["root"], new Set())
   return errors
+}
+
+/**
+ * What skipping a node would break: the existing walk run twice, once as the tree stands and once
+ * with the node suppressed, keeping only the errors the suppression introduced. Nothing is
+ * re-derived, so the skip rule inherits every rule the validator has — required inputs and
+ * Condition predicate sources alike (a missing predicate source silently takes the false branch
+ * at runtime, which is a reroute the user never asked for).
+ */
+export const skipBreaksContract = (
+  tree: WorkflowTree,
+  catalog: WorkflowCatalog,
+  nodeId: BlockId,
+): ReadonlyArray<ValidationError> => {
+  const keyOf = (error: ValidationError) =>
+    `${error.rule}|${error.path.join("/")}|${error.message}`
+  const baseline = new Set(validateWorkflow(tree, catalog).map(keyOf))
+  return validateWorkflow(tree, catalog, nodeId).filter((error) => !baseline.has(keyOf(error)))
 }

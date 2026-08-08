@@ -257,6 +257,73 @@ it(
 )
 
 it(
+  "accepts a safe skip, performs it, and refuses skipping the block that is running",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": { output: { summary: "done" }, delayMs: 2500 },
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* startRun(client, project.id, "small fix")
+        yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length > 0)
+
+        const running = yield* client.post(`/api/runs/${runId}/blocks/implement/skip`)
+        const accepted = yield* client.post(`/api/runs/${runId}/blocks/verify/skip`)
+        yield* waitFor(runId, finished)
+        return { running, accepted, found: yield* events(runId) }
+      }),
+    )
+
+    expect(result.running.status).toBe(409)
+    expect(json<{ detail: string }>(result.running).detail).toContain("Stop the run")
+    expect(result.accepted.status).toBe(202)
+    expect(tagged(result.found, "BlockSkipRequested")).toHaveLength(1)
+    const skipped = tagged(result.found, "BlockSkipped")
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].blockId).toBe("verify")
+    expect(tagged(result.found, "RunFinished")[0].payload).toMatchObject({ status: "succeeded" })
+  },
+  2 * minutes,
+)
+
+it(
+  "refuses a skip that would starve a later block, naming it",
+  async () => {
+    writeScript({
+      analyzer: chooses("task", { focus: "the parser" }),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* startRun(client, project.id, "rename the parser field")
+        // Parked at the plan gate: nothing is running, the tree exists, nothing after it ran.
+        yield* waitFor(runId, (found) => tagged(found, "ApprovalRequested").length > 0)
+
+        const unsafe = yield* client.post(`/api/runs/${runId}/blocks/implement/skip`)
+        const unknown = yield* client.post(`/api/runs/${runId}/blocks/no-such-node/skip`)
+        return { unsafe, unknown }
+      }),
+    )
+
+    expect(result.unsafe.status).toBe(409)
+    const detail = json<{ detail: string }>(result.unsafe).detail
+    expect(detail).toContain("verify")
+    expect(result.unknown.status).toBe(409)
+    expect(json<{ detail: string }>(result.unknown).detail).toContain("names no block")
+  },
+  2 * minutes,
+)
+
+it(
   "closes nothing on a shutdown interrupt, even after an earlier stop of the same run",
   async () => {
     writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })

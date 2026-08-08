@@ -5,6 +5,8 @@ import { expect, it } from "vitest"
 import {
   agentTask,
   BlockId,
+  correctivePolicy,
+  RunId,
   runCommand,
   verifyOutput,
   WorkflowEngine,
@@ -331,23 +333,26 @@ const branchedTree = (tail: WorkflowNode): WorkflowNode => ({
   ],
 })
 
-it("fails an attempt whose required input was never produced", async () => {
-  const { events, failure } = await withEngine(
+it("fails an attempt whose required input was never produced, with a verdict", async () => {
+  const { events, outcome } = await withEngine(
     { report: verdict(false), "agent-task": summary("took the other branch") },
     ({ runId, start }) =>
       Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          start(
-            branchedTree(block("review", verifyOutput.id, { inputs: [id("implement")] })),
-            catalog([reporter]),
-          ),
+        const outcome = yield* start(
+          branchedTree(block("review", verifyOutput.id, { inputs: [id("implement")] })),
+          catalog([reporter]),
         )
-        return { failure: String(exit), events: yield* readEvents(runId) }
+        return { outcome, events: yield* readEvents(runId) }
       }),
   )
 
-  expect(failure).toContain("missing required input")
+  // A starved input is a semantic failure of the attempt, not an engine error: the run closes
+  // through finishRun with a packet, and a retrying policy could still recover it.
+  expect(outcome.status).toBe("failed")
   expect(of(events, "ErrorRaised")[0].payload).toMatchObject({ signature: "missing-input" })
+  expect(of(events, "AttemptFinished").map((event) => event.payload.verdict)).toContain(
+    "semantic-failure",
+  )
   expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual([
     "check",
     "other",
@@ -396,4 +401,122 @@ it("fails the run when a command block exits non-zero, keeping its output", asyn
   expect(outcome.status).toBe("failed")
   expect(of(events, "BlockFinished")[0].payload).toMatchObject({ status: "failed" })
   expect(of(events, "OutputChunk").map((event) => event.payload.streamKind)).toContain("stderr")
+}, 30_000)
+
+it("skips a block on a live request without ever spawning it", async () => {
+  const result = await withEngine({}, ({ runId, start }) =>
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine
+      yield* engine.requestSkip(runId, id("implement"))
+      const outcome = yield* start(block("implement", agentTask.id))
+      return { outcome, events: yield* readEvents(runId) }
+    }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "BlockSkipped")[0].payload.reason).toBe("skipped by user request")
+  expect(of(result.events, "AttemptStarted")).toHaveLength(0)
+}, 30_000)
+
+it("honours a skip recorded before the run started", async () => {
+  const result = await withEngine({}, ({ start, runId }) =>
+    Effect.gen(function* () {
+      const outcome = yield* start(
+        block("implement", agentTask.id),
+        undefined,
+        undefined,
+        new Set(["implement"]),
+      )
+      return { outcome, events: yield* readEvents(runId) }
+    }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "BlockSkipped")).toHaveLength(1)
+}, 30_000)
+
+it("keeps a skip recorded for one run away from another run's same-named node", async () => {
+  const result = await withEngine(
+    { "agent-task": { output: { summary: "done" } } },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        const engine = yield* WorkflowEngine
+        yield* engine.requestSkip(RunId.make("some-other-run"), id("implement"))
+        const outcome = yield* start(block("implement", agentTask.id))
+        return { outcome, events: yield* readEvents(runId) }
+      }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "BlockSkipped")).toHaveLength(0)
+  expect(of(result.events, "AttemptStarted")).toHaveLength(1)
+}, 30_000)
+
+// One scenario, two guarantees: the skip is consumed at its next visit so the loop's second
+// iteration executes, and the starved verify fails its attempt semantically — with a packet —
+// instead of escaping the engine as a run-pipeline error.
+it("consumes a loop-body skip at one visit and fails the starved block semantically", async () => {
+  const loop: WorkflowNode = {
+    _tag: "Loop",
+    body: {
+      _tag: "Sequence",
+      children: [
+        block("implement", agentTask.id),
+        block("verify", verifyOutput.id, { inputs: [id("implement")] }),
+      ],
+    },
+    policy: correctivePolicy.id,
+    kind: "corrective",
+    feedbackRoute: { from: id("verify"), to: id("implement") },
+  }
+
+  const result = await withEngine(
+    {
+      "agent-task": { output: { summary: "done" } },
+      "verify-output": { output: { passed: true, findings: [] } },
+    },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        const engine = yield* WorkflowEngine
+        yield* engine.requestSkip(runId, id("implement"))
+        const outcome = yield* start(loop)
+        return { outcome, events: yield* readEvents(runId) }
+      }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "BlockSkipped")).toHaveLength(1)
+  const missing = of(result.events, "ErrorRaised").filter(
+    (event) => event.payload.signature === "missing-input",
+  )
+  expect(missing).toHaveLength(1)
+  expect(
+    of(result.events, "AttemptFinished").map((event) => event.payload.verdict),
+  ).toContain("semantic-failure")
+  expect(of(result.events, "FailureFeedbackForwarded")).toHaveLength(1)
+  // The consumed request lets iteration two actually run the implementation.
+  expect(of(result.events, "BlockStarted").some((event) => event.blockId === "implement#2")).toBe(
+    true,
+  )
+}, 60_000)
+
+it("fails a starved single-attempt block as a run failure with a verdict, not an engine error", async () => {
+  const result = await withEngine({}, ({ runId, start }) =>
+    Effect.gen(function* () {
+      const engine = yield* WorkflowEngine
+      yield* engine.requestSkip(runId, id("implement"))
+      const outcome = yield* start({
+        _tag: "Sequence",
+        children: [
+          block("implement", agentTask.id),
+          block("verify", verifyOutput.id, { inputs: [id("implement")] }),
+        ],
+      })
+      return { outcome, events: yield* readEvents(runId) }
+    }),
+  )
+
+  expect(result.outcome.status).toBe("failed")
+  expect(of(result.events, "RunFinished")[0].payload.status).toBe("failed")
+  expect(of(result.events, "AttemptFinished")[0].payload.verdict).toBe("semantic-failure")
 }, 30_000)

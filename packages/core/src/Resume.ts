@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { readFile } from "node:fs/promises"
 import { JournalError } from "./errors.js"
-import { BlockStatus, eventsOf } from "./events.js"
+import { BlockStatus, eventsOf, JournalEvent } from "./events.js"
 import { ArtifactId, AttemptId, BlockId, CheckpointId, RunId, SessionId } from "./ids.js"
 import { allEvents, Journal } from "./Journal.js"
 import { BlockRow, Store } from "./Store.js"
@@ -33,6 +33,8 @@ export interface ResumePlan {
   readonly nodes: ReadonlyMap<string, ResumedNode>
   /** Gates the run already decided; a resumed walk reads the decision instead of asking again. */
   readonly decisions: ReadonlyMap<string, boolean>
+  /** Node ids with an outstanding skip request, honoured at their next visit. */
+  readonly skips: ReadonlySet<string>
   readonly lastCheckpoint?: CheckpointId
   /** The attempt the interruption left open, which owns whatever the worktree still holds. */
   readonly openAttempt?: { readonly blockId: BlockId; readonly attemptId: AttemptId }
@@ -44,6 +46,28 @@ const instanced = /^(.*)#(\d+)$/
 const nodeOf = (blockId: string) => instanced.exec(blockId)?.[1] ?? blockId
 
 const terminal = new Set<BlockStatus>(["succeeded", "failed", "skipped"])
+
+/**
+ * Node ids with an outstanding skip request: requested after the node's last visit. One fold for
+ * every reader — a fresh start and a re-entry must agree on which requests are still pending, or
+ * a skip is honoured on one path and silently ignored on the other.
+ */
+export const recordedSkips = (events: ReadonlyArray<JournalEvent>): ReadonlySet<string> => {
+  const pending = new Set<string>()
+  for (const event of events) {
+    const payload = event.payload
+    if (payload._tag === "BlockSkipRequested") pending.add(payload.nodeId)
+    else if (
+      (payload._tag === "BlockStarted" ||
+        payload._tag === "BlockSkipped" ||
+        payload._tag === "BlockReplayed") &&
+      event.blockId !== undefined
+    ) {
+      pending.delete(nodeOf(event.blockId))
+    }
+  }
+  return pending
+}
 
 /**
  * Whether the interruption caught a loop part-way through an iteration, rather than between two:
@@ -198,6 +222,7 @@ export const buildResumePlan = (
       decisions: new Map(
         eventsOf(events, "ApprovalDecided").map(({ payload }) => [payload.gateId, payload.approved]),
       ),
+      skips: recordedSkips(events),
       lastCheckpoint: confirmed.at(-1)?.payload.checkpointId,
       ...(open?.blockId === undefined || open.attemptId === undefined
         ? {}

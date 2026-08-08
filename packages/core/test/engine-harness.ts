@@ -75,6 +75,7 @@ export interface Harness {
     root: WorkflowNode,
     given?: WorkflowCatalog,
     resume?: ResumePlan,
+    skips?: ReadonlySet<string>,
   ) => Effect.Effect<RunOutcome, unknown, EngineContext>
 }
 
@@ -129,7 +130,7 @@ export const withEngine = async <A, E>(
       return yield* body({
         runId,
         workspace,
-        start: (root, given, resume) =>
+        start: (root, given, resume, skips) =>
           engine.run({
             runId,
             task: { prompt, projectId: "proj" },
@@ -137,6 +138,7 @@ export const withEngine = async <A, E>(
             workspace,
             catalog: given ?? catalog(),
             resume,
+            skips,
           }),
       })
     }),

@@ -188,6 +188,14 @@ export default function App() {
     void act("run", () => source.stop(runId))
   }, [act, source, runId])
 
+  const skipBlock = useCallback(
+    (blockId: string) => {
+      if (!runId) return
+      void act("run", () => source.skipBlock(runId, blockId))
+    },
+    [act, source, runId],
+  )
+
   const resume = useCallback(() => {
     if (!runId) return
     void act("run", async () => {
@@ -472,6 +480,7 @@ export default function App() {
                       setSelectedBlock(id)
                       setFocus(-1)
                     }}
+                    onSkip={skipBlock}
                     onClose={() => setTreeOpen(false)}
                     floating={narrow}
                   />

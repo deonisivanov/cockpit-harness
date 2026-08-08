@@ -1,7 +1,10 @@
 import { FileSystem } from "@effect/platform"
 import {
+  allEvents,
   Analyzer,
   ArtifactStore,
+  BlockId,
+  blocksIn,
   buildRegistry,
   buildResumePlan,
   CartridgeLoader,
@@ -11,11 +14,13 @@ import {
   JournalError,
   PluginCatalog,
   ProjectRow,
+  recordedSkips,
   ResumePlan,
   RetrospectiveService,
   RetryPolicy,
   RunId,
   RunRow,
+  skipBreaksContract,
   Store,
   TransformPipeline,
   WorkflowEngine,
@@ -71,8 +76,21 @@ export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
     readonly cancel: (runId: RunId) => Effect.Effect<boolean>
     /** Like cancel, but the run closes as interrupted and stays resumable. */
     readonly stop: (runId: RunId) => Effect.Effect<boolean>
+    /**
+     * Records a request to skip a node's next visit, refused when the tree would stop validating
+     * without it. The request is durable; a live run also learns of it immediately.
+     */
+    readonly skip: (
+      runId: RunId,
+      nodeId: string,
+    ) => Effect.Effect<SkipDecision, JournalError | WorkspaceError>
   }
 >() {}
+
+export type SkipDecision =
+  | { readonly _tag: "accepted" }
+  | { readonly _tag: "unknown" }
+  | { readonly _tag: "refused"; readonly detail: string }
 
 export const RunSupervisorLive = Layer.scoped(
   RunSupervisor,
@@ -171,6 +189,8 @@ export const RunSupervisorLive = Layer.scoped(
           tree,
           workspace,
           catalog,
+          // Requests recorded while the run was still being planned survive a daemon restart.
+          skips: recordedSkips(yield* allEvents(journal, runId)),
         })
       })
 
@@ -410,6 +430,53 @@ export const RunSupervisorLive = Layer.scoped(
       cancel: (runId) => interrupt(runId, "cancel"),
 
       stop: (runId) => interrupt(runId, "stop"),
+
+      skip: (runId, nodeId) =>
+        Effect.gen(function* () {
+          const refused = (detail: string) => ({ _tag: "refused", detail }) as const
+          const run = yield* store.run(runId)
+          if (run === undefined) return { _tag: "unknown" } as const
+          if (run.status === "succeeded" || run.status === "cancelled") {
+            return refused(`run ${runId} is ${run.status}; there is nothing left to skip`)
+          }
+          const active = (yield* store.blocks(runId)).find(
+            (block) => block.id.replace(/#\d+$/, "") === nodeId && block.status === "running",
+          )
+          if (active !== undefined) {
+            return refused(`${nodeId} is running now — Stop the run, skip the block, then Resume`)
+          }
+          const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
+          const planned = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
+          if (planned === undefined) {
+            return refused("the run has no workflow tree yet — wait for the analysis to finish")
+          }
+          if (!blocksIn(planned.tree.root).some((block) => block.id === nodeId)) {
+            return refused(`${nodeId} names no block in this run's workflow`)
+          }
+          const project = yield* store.project(run.projectId)
+          const cartridge =
+            project === undefined
+              ? undefined
+              : yield* cartridgeFor(project.repoPath).pipe(Effect.orElseSucceed(() => undefined))
+          const registry = yield* buildRegistry(cartridge?.config).pipe(
+            Effect.orElseSucceed(() => undefined),
+          )
+          if (registry === undefined) return refused("the project's cartridge does not load")
+          const broken = skipBreaksContract(
+            planned.tree,
+            { blocks: registry.catalog.blocks, policies: planned.policies },
+            BlockId.make(nodeId),
+          )
+          const first = broken[0]
+          if (first !== undefined) {
+            return refused(
+              `skipping ${nodeId} would break ${first.path.at(-1) ?? "the workflow"}: ${first.message}`,
+            )
+          }
+          yield* journal.append({ runId, payload: { _tag: "BlockSkipRequested", nodeId } })
+          yield* engine.requestSkip(runId, BlockId.make(nodeId))
+          return { _tag: "accepted" } as const
+        }),
     }
 
     // Marked before the interrupt, or supervise races an empty map and closes nothing.

@@ -634,6 +634,9 @@ export function mockSource(state: MockState): Source {
     stop: async () => {
       emit({ _tag: "RunStopped" })
     },
+    skipBlock: async (_runId, blockId) => {
+      emit({ _tag: "BlockSkipRequested", nodeId: blockId })
+    },
     resume: async () => {
       emit({ _tag: "RunResumed" })
     },
