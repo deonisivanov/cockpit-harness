@@ -1,6 +1,6 @@
 import { HttpServer } from "@effect/platform"
 import { NodeContext, NodeHttpServer, NodeRuntime } from "@effect/platform-node"
-import { coreVersion, DaemonLockLive, PlanningLive, RecoveryScanLive } from "@cockpit/core"
+import { ContinuityLive, coreVersion, DaemonLockLive, RecoveryScanLive } from "@cockpit/core"
 import { Config, Effect, Layer } from "effect"
 import { createServer } from "node:http"
 import { makeRoutesLayer, serveRoutes } from "./router.js"
@@ -15,7 +15,7 @@ const CoreVersionLog = Layer.effectDiscard(Effect.log(`cockpitd core v${coreVers
 
 const KernelWithRecovery = RecoveryScanLive.pipe(
   Layer.provideMerge(RunSupervisorLive),
-  Layer.provideMerge(PlanningLive),
+  Layer.provideMerge(ContinuityLive),
   // Built before anything below it, so a second daemon fails before it opens the journal.
   Layer.provide(DaemonLockLive),
   Layer.provide(NodeContext.layer),

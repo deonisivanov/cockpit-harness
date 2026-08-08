@@ -16,7 +16,7 @@ import {
 } from "./Provider.js"
 import { ProcessSupervisor } from "./ProcessSupervisor.js"
 
-const claudeBinary = Config.string("COCKPIT_CLAUDE_BIN").pipe(
+export const claudeBinary = Config.string("COCKPIT_CLAUDE_BIN").pipe(
   Config.withDefault("claude"),
 )
 

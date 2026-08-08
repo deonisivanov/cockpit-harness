@@ -1,7 +1,7 @@
 import { HttpClient, HttpClientRequest, HttpServer } from "@effect/platform"
 import { NodeContext, NodeHttpServer } from "@effect/platform-node"
 import { createServer } from "node:http"
-import { JournalEvent, PlanningLive } from "@cockpit/core"
+import { ContinuityLive, JournalEvent } from "@cockpit/core"
 import { ConfigProvider, Effect, Layer, Schedule } from "effect"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -13,10 +13,13 @@ import { RunSupervisorLive } from "../src/runs.js"
 
 // The scripted stand-in for the provider CLIs lives with the core tests that record against the
 // real ones; the daemon drives the same binary rather than keeping a second copy of it.
-export const fakeProvider = NodePath.resolve(
-  import.meta.dirname,
-  "../../../packages/core/test/fake-provider.mjs",
-)
+const coreFixture = (name: string) =>
+  NodePath.resolve(import.meta.dirname, "../../../packages/core/test", name)
+
+const fakeProvider = coreFixture("fake-provider.mjs")
+/** Wired in by default so no daemon under test can reach the real herdr socket or a real window. */
+const fakeHerdr = coreFixture("fake-herdr.mjs")
+const fakeOpen = coreFixture("fake-open.mjs")
 
 const created: string[] = []
 afterAll(() => created.forEach((dir) => rmSync(dir, { recursive: true, force: true })))
@@ -58,7 +61,7 @@ export type Settings = Readonly<Record<string, string>>
 
 export const daemonLayer = (settings: Settings = {}) =>
   RunSupervisorLive.pipe(
-    Layer.provideMerge(PlanningLive),
+    Layer.provideMerge(ContinuityLive),
     Layer.provide(NodeContext.layer),
     Layer.provide(
       Layer.setConfigProvider(
@@ -68,6 +71,8 @@ export const daemonLayer = (settings: Settings = {}) =>
               COCKPIT_HOME: tempDir("cockpitd-home-"),
               COCKPIT_CLAUDE_BIN: fakeProvider,
               COCKPIT_CODEX_BIN: fakeProvider,
+              COCKPIT_HERDR_BIN: fakeHerdr,
+              COCKPIT_OPEN_BIN: fakeOpen,
               COCKPIT_KILL_GRACE_MS: "200",
               CLAUDE_CONFIG_DIR: tempDir("cockpitd-claude-"),
               ...settings,

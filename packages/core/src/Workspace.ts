@@ -97,6 +97,18 @@ export class WorkspaceManager extends Context.Tag("cockpit/WorkspaceManager")<
       readonly baseCommit: string
       readonly runId: RunId
     }) => Effect.Effect<Workspace, WorkspaceError>
+    /**
+     * Puts a run's worktree back at the path it was recorded under, for a terminal handoff that
+     * finds it gone (plan §10). Detached, not on the run's branch: the branch may carry salvage
+     * tags a reset would strand (plan §9), and nothing about reading the work needs to be on it.
+     */
+    readonly restore: (input: {
+      readonly projectId: string
+      readonly repoPath: string
+      readonly runId: RunId
+      readonly branch: string
+      readonly commit: string
+    }) => Effect.Effect<Workspace, WorkspaceError>
     readonly reconcile: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
     readonly remove: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
     /** The repository root a path belongs to; fails when it is not one, which registration needs. */
@@ -131,6 +143,25 @@ export const WorkspaceManagerLive = Layer.effect(
           const branch = `cockpit/run-${input.runId}`
           yield* git("create", input.repoPath, "worktree", "add", "-b", branch, path, baseCommit)
           return { ...input, baseCommit, path, branch }
+        }),
+
+      restore: (input) =>
+        Effect.gen(function* () {
+          const baseCommit = yield* resolveCommit("create", input.repoPath, input.commit)
+          const path = NodePath.resolve(root, input.projectId, input.runId)
+          yield* requireInsideRoot("create", path)
+          // A directory deleted rather than removed leaves its registration behind, and git
+          // refuses to add a path it still believes is checked out.
+          yield* git("create", input.repoPath, "worktree", "prune")
+          yield* git("create", input.repoPath, "worktree", "add", "--detach", path, baseCommit)
+          return {
+            projectId: input.projectId,
+            runId: input.runId,
+            repoPath: input.repoPath,
+            path,
+            branch: input.branch,
+            baseCommit,
+          }
         }),
 
       reconcile: (workspace) =>
@@ -187,9 +218,14 @@ export class CheckpointService extends Context.Tag("cockpit/CheckpointService")<
       workspace: Workspace,
       checkpointId: CheckpointId,
     ) => Effect.Effect<void, WorkspaceError>
-    /** Paths a block or attempt has touched since the last checkpoint; empty means it changed nothing. */
+    /**
+     * Paths a block or attempt has touched since the last checkpoint; empty means it changed
+     * nothing. With `since`, the whole run's work instead: everything the worktree holds that the
+     * given commit did not, committed checkpoints included.
+     */
     readonly changedFiles: (
       workspace: Workspace,
+      since?: string,
     ) => Effect.Effect<ReadonlyArray<string>, WorkspaceError>
     /**
      * Keeps whatever a failed attempt left behind, or nothing when it changed nothing. Inspection
@@ -232,6 +268,21 @@ export const CheckpointServiceLive = Layer.effect(
         }
         return paths
       })
+
+    /**
+     * Everything the worktree holds that `since` did not. The diff covers tracked work, committed
+     * or not; the second list adds files git has never seen, which is all a run that died before
+     * its first checkpoint has to show for itself.
+     */
+    const changedSince = (workspace: Workspace, since: string) =>
+      Effect.map(
+        Effect.all([
+          git("checkpoint", workspace.path, "diff", "--name-only", "-z", since, "--"),
+          git("checkpoint", workspace.path, "ls-files", "--others", "--exclude-standard", "-z"),
+        ]),
+        (outputs) =>
+          [...new Set(outputs.flatMap((out) => out.split("\0")))].filter((path) => path !== ""),
+      )
 
     /** Unlocked on purpose: `salvage` composes this with an inspection under one critical section. */
     const commitAll = (workspace: Workspace, input: CheckpointInput) =>
@@ -310,7 +361,10 @@ export const CheckpointServiceLive = Layer.effect(
           yield* git("rollback", workspace.path, "reset", "--hard", `${checkpointId}^{commit}`)
         }).pipe(gitLock.withPermits(1)),
 
-      changedFiles: (workspace) => changed(workspace).pipe(gitLock.withPermits(1)),
+      changedFiles: (workspace, since) =>
+        (since === undefined ? changed(workspace) : changedSince(workspace, since)).pipe(
+          gitLock.withPermits(1),
+        ),
     }
   }),
 )

@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { httpSource, type Source } from "./api.js"
 import { isMockState, mockSource } from "./mock.js"
-import type { Project, Run, RunDetail, RunStatus } from "./model.js"
-import { buildRows, filterRows, fmtElapsed } from "./presentation.js"
+import type { Project, Run, RunDetail, RunStatus, TerminalHandoff } from "./model.js"
+import {
+  buildRows,
+  filterRows,
+  fmtElapsed,
+  TERMINAL_TITLE,
+  TERMINAL_WRITE_WARNING,
+  terminalNote,
+} from "./presentation.js"
 import { Rail } from "./Rail.js"
 import { Stream } from "./Stream.js"
 import { attemptsOf, currentBlockId, useEventStore } from "./store.js"
 import { Tree } from "./Tree.js"
 import { flattenTree, maxAttemptsByBlock } from "./treeModel.js"
 
-type ActionScope = "gate" | "question" | "run" | "start"
+type ActionScope = "gate" | "question" | "run" | "start" | "terminal"
 
 const STATUS_TONE: Record<RunStatus, string> = {
   created: "border-blue/25 bg-blue/8 text-blue",
@@ -41,6 +48,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ scope: ActionScope; message: string } | null>(null)
   const [prompt, setPrompt] = useState("")
+  const [handoff, setHandoff] = useState<TerminalHandoff | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const { state, answered, decided } = useEventStore(source, runId)
@@ -165,6 +173,11 @@ export default function App() {
     void act("run", () => source.cancel(runId))
   }, [act, source, runId])
 
+  const openTerminal = useCallback(() => {
+    if (!runId) return
+    void act("terminal", async () => setHandoff(await source.openTerminal(runId)))
+  }, [act, source, runId])
+
   const startRun = useCallback(() => {
     if (!project || !prompt.trim()) return
     void act("start", async () => {
@@ -264,8 +277,12 @@ export default function App() {
             setSelectedBlock(null)
             setFocus(-1)
             setExpanded(new Set())
+            setHandoff(null)
           }}
-          onNewTask={() => setRunId(null)}
+          onNewTask={() => {
+            setRunId(null)
+            setHandoff(null)
+          }}
           badge={waiting}
           activity={activity}
         />
@@ -307,13 +324,32 @@ export default function App() {
                 )}
                 <button
                   type="button"
-                  disabled
-                  title="Terminal handoff arrives with the continuity phase"
-                  className="cursor-not-allowed rounded-md border border-vio/40 bg-vio/12 px-3.5 py-1.5 font-sans text-[12px] font-semibold text-vio-hi opacity-50"
+                  data-testid="open-terminal"
+                  disabled={busy}
+                  onClick={openTerminal}
+                  title={TERMINAL_TITLE}
+                  className="rounded-md border border-vio/40 bg-vio/12 px-3.5 py-1.5 font-sans text-[12px] font-semibold text-vio-hi hover:bg-vio/20 disabled:opacity-40"
                 >
                   Open session in terminal ↗
                 </button>
               </div>
+              {isLive && (
+                <div
+                  data-testid="terminal-write-warning"
+                  className="mt-2 font-sans text-[11.5px] text-amber"
+                >
+                  {TERMINAL_WRITE_WARNING}
+                </div>
+              )}
+              {error?.scope === "terminal" ? (
+                <div data-testid="terminal-note" className="mt-2 font-sans text-[11.5px] text-red">
+                  {error.message}
+                </div>
+              ) : handoff ? (
+                <div data-testid="terminal-note" className="mt-2 font-sans text-[11.5px] text-ink-4">
+                  {terminalNote(handoff)}
+                </div>
+              ) : null}
             </div>
           )}
 
@@ -339,6 +375,7 @@ export default function App() {
                   onToggle={toggleRow}
                   onDecide={decide}
                   onAnswer={answer}
+                  onOpenTerminal={openTerminal}
                   busy={busy}
                   gateError={error?.scope === "gate" ? error.message : null}
                   questionError={error?.scope === "question" ? error.message : null}

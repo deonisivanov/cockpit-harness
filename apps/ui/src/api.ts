@@ -1,4 +1,11 @@
-import type { ArtifactBody, JournalEvent, Project, Run, RunDetail } from "./model.js"
+import type {
+  ArtifactBody,
+  JournalEvent,
+  Project,
+  Run,
+  RunDetail,
+  TerminalHandoff,
+} from "./model.js"
 import type { EventSource } from "./store.js"
 
 export interface Source extends EventSource {
@@ -16,6 +23,18 @@ export interface Source extends EventSource {
     stillPending?: () => boolean,
   ): Promise<void>
   cancel(runId: string): Promise<void>
+  openTerminal(runId: string): Promise<TerminalHandoff>
+}
+
+/** The daemon answers failures in JSON too, and its `detail` is the only useful half of them. */
+const failure = async (head: string, res: Response) => {
+  try {
+    const body = (await res.json()) as { error?: string; detail?: string }
+    const said = [body.error, body.detail].filter(Boolean).join(": ")
+    return said === "" ? head : `${head} ${said}`
+  } catch {
+    return head
+  }
 }
 
 const json = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -23,7 +42,9 @@ const json = async <T>(path: string, init?: RequestInit): Promise<T> => {
     ...init,
     headers: init?.body ? { "content-type": "application/json" } : undefined,
   })
-  if (!res.ok) throw new Error(`${init?.method ?? "GET"} /api${path} → ${res.status}`)
+  if (!res.ok) {
+    throw new Error(await failure(`${init?.method ?? "GET"} /api${path} → ${res.status}`, res))
+  }
   return (await res.json()) as T
 }
 
@@ -44,6 +65,7 @@ export const httpSource: Source = {
   decideGate: (runId, gateId, approved, note) =>
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),
+  openTerminal: (runId) => post<TerminalHandoff>(`/runs/${runId}/terminal`),
 
   // The row carries kind/path; the body lives behind /raw, capped at 1 MiB by the daemon.
   async artifact(id) {

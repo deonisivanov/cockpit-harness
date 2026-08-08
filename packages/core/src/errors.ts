@@ -46,6 +46,11 @@ export class CartridgeError extends Schema.TaggedError<CartridgeError>()("Cartri
   detail: Schema.String,
 }) {}
 
+export class HerdrError extends Schema.TaggedError<HerdrError>()("HerdrError", {
+  op: Schema.Literal("connect", "tab", "agent"),
+  detail: Schema.String,
+}) {}
+
 export class PreflightError extends Schema.TaggedError<PreflightError>()("PreflightError", {
   reason: Schema.Literal(
     "provider-unavailable",

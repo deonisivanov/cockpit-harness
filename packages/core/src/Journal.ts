@@ -108,6 +108,12 @@ export class Journal extends Context.Tag("cockpit/Journal")<
       attemptId: AttemptId,
     ) => Effect.Effect<void, JournalError>
 
+    /** The run's one continuation session (ADR-008); a later call replaces an unresumable id. */
+    readonly openCanonicalSession: (
+      runId: RunId,
+      sessionId: SessionId,
+    ) => Effect.Effect<void, JournalError>
+
     readonly recordCheckpoint: (
       input: RecordCheckpointInput,
     ) => Effect.Effect<void, JournalError>
@@ -516,6 +522,18 @@ export const JournalLive = Layer.effect(
           }),
         ),
 
+      openCanonicalSession: (runId, sessionId) =>
+        commitVoid(
+          "openCanonicalSession",
+          Effect.gen(function* () {
+            // Any status: the button is offered while a run executes and long after it ended.
+            yield* requireRunStatus("openCanonicalSession", runId, RunStatus.literals)
+            yield* sql`
+              UPDATE runs SET canonical_session_id = ${sessionId} WHERE id = ${runId}`
+            return { runId, payload: { _tag: "SessionStarted", sessionId } as const }
+          }),
+        ),
+
       recordCheckpoint: (input) =>
         commitVoid(
           "recordCheckpoint",
@@ -550,9 +568,9 @@ export const JournalLive = Layer.effect(
         commitVoid(
           "recordArtifact",
           Effect.gen(function* () {
-            // `created` too: the Analyzer's prompt and decision belong to the run that is being
-            // planned, and planning happens before the engine starts it.
-            yield* requireRunStatus("recordArtifact", input.runId, ["created", "running"])
+            // Any status: the Analyzer writes before the engine opens the run, and the task brief
+            // is assembled for a terminal handoff long after it closed.
+            yield* requireRunStatus("recordArtifact", input.runId, RunStatus.literals)
             yield* requireAbsent("recordArtifact", "artifacts", input.artifactId)
             // No parent join, unlike checkpoints: an approval payload belongs to a gate, and a
             // gate has an id without ever becoming a block row.

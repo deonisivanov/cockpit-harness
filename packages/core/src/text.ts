@@ -7,6 +7,10 @@ const wholeCodePoints = (text: string) => {
 export const clip = (text: string, max: number) =>
   text.length <= max ? text : wholeCodePoints(text.slice(0, max))
 
+/** Collapsed to one budgeted line: what a brief entry or a terminal tab title can hold. */
+export const oneLine = (text: string, max: number) =>
+  clip(text.replace(/\s+/g, " ").trim(), max)
+
 /**
  * The parameter slot syntax shared by workflow templates and plugin argument templates. A slot with
  * no value renders empty rather than leaking `{{name}}` into a prompt an agent has to read.

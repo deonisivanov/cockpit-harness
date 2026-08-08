@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
-import type { EventPayload, JournalEvent } from "./model.js"
-import { buildRows, describe as describeEvent, filterRows, fmtDuration, parseDiff } from "./presentation.js"
+import type { EventPayload, JournalEvent, TerminalHandoff } from "./model.js"
+import {
+  buildRows,
+  describe as describeEvent,
+  filterRows,
+  fmtDuration,
+  parseDiff,
+  terminalNote,
+} from "./presentation.js"
 import { applyEvents, emptyRunState } from "./store.js"
 
 let seq = 0
@@ -238,5 +245,34 @@ describe("fmtDuration", () => {
     expect(fmtDuration(412)).toBe("412ms")
     expect(fmtDuration(18_600)).toBe("18.6s")
     expect(fmtDuration(192_000)).toBe("3m12")
+  })
+})
+
+describe("terminalNote", () => {
+  const handoff = (patch: Partial<TerminalHandoff>): TerminalHandoff => ({
+    opened: true,
+    mode: "herdr",
+    sessionId: "s1",
+    ...patch,
+  })
+
+  it("says the run's own session was resumed", () => {
+    expect(terminalNote(handoff({}))).toBe("opened a herdr tab with the run's session, resumed")
+  })
+
+  it("distinguishes a seeded session from one that could not be resumed", () => {
+    expect(terminalNote(handoff({ briefPath: "/b.md" }))).toContain("seeded with the task brief")
+    expect(terminalNote(handoff({ briefPath: "/b.md", fallback: "fresh-session" }))).toContain(
+      "could not be resumed",
+    )
+  })
+
+  it("names both a rebuilt worktree and a herdr outage", () => {
+    const note = terminalNote(
+      handoff({ mode: "ghostty", fallback: "fresh-worktree", warning: "socket refused" }),
+    )
+    expect(note).toContain("Ghostty window")
+    expect(note).toContain("checked out again from the last checkpoint")
+    expect(note).toContain("herdr was unavailable: socket refused")
   })
 })

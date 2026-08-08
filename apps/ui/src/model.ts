@@ -206,6 +206,16 @@ export interface RunDetail {
   readonly retryPolicies?: Readonly<Record<string, { readonly maxAttempts: number }>>
 }
 
+/** What `POST /runs/:id/terminal` answers: which terminal took the session, and what it cost. */
+export interface TerminalHandoff {
+  readonly opened: true
+  readonly mode: "herdr" | "ghostty"
+  readonly fallback?: "fresh-session" | "fresh-worktree"
+  readonly sessionId: string
+  readonly warning?: string
+  readonly briefPath?: string
+}
+
 /** Assembled client-side: the row from `/artifacts/:id`, the body from `/artifacts/:id/raw`. */
 export interface ArtifactBody {
   readonly id: string

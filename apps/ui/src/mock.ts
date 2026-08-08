@@ -595,6 +595,12 @@ export function mockSource(state: MockState): Source {
     cancel: async () => {
       emit({ _tag: "RunCancelled" })
     },
+    openTerminal: async () => ({
+      opened: true,
+      mode: "herdr",
+      sessionId: "8f1c0f5e-6a0e-4f2f-9d6a-2f0f7b3a1c44",
+      briefPath: "/Users/you/.cockpit/runs/run_a1/task-brief.md",
+    }),
     fetchEvents: async (_runId, from) => events.filter((e) => e.seq > from).slice(0, streamFrom),
     subscribe: (_runId, from, onEvents) => {
       listeners.add(onEvents)

@@ -14,7 +14,7 @@ import {
 } from "./Provider.js"
 import { ProcessSupervisor } from "./ProcessSupervisor.js"
 
-const codexBinary = Config.string("COCKPIT_CODEX_BIN").pipe(Config.withDefault("codex"))
+export const codexBinary = Config.string("COCKPIT_CODEX_BIN").pipe(Config.withDefault("codex"))
 
 /**
  * `read-plus-output` lands on workspace-write: the sandbox has no read-only mode with a writable

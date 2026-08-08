@@ -1,5 +1,28 @@
-import type { EventPayload, JournalEvent } from "./model.js"
+import type { EventPayload, JournalEvent, TerminalHandoff } from "./model.js"
 import type { AttemptState, RunState } from "./store.js"
+
+export const TERMINAL_TITLE =
+  "Opens the run's canonical session in a terminal, seeded with the task brief"
+
+/** Plan §10: the button stays available during execution, and the risk is on screen, not in a tooltip. */
+export const TERMINAL_WRITE_WARNING =
+  "This run is still executing — a block may hold write access to this worktree, so read at your own risk."
+
+/** One line for the handoff: which terminal took it, which session, and what had to be rebuilt. */
+export const terminalNote = (handoff: TerminalHandoff): string =>
+  [
+    `opened a ${handoff.mode === "herdr" ? "herdr tab" : "Ghostty window"} with ${
+      handoff.fallback === "fresh-session"
+        ? "a new session — the previous one could not be resumed"
+        : handoff.briefPath
+          ? "a new session seeded with the task brief"
+          : "the run's session, resumed"
+    }`,
+    ...(handoff.fallback === "fresh-worktree"
+      ? ["the worktree was gone, so it was checked out again from the last checkpoint"]
+      : []),
+    ...(handoff.warning === undefined ? [] : [`herdr was unavailable: ${handoff.warning}`]),
+  ].join(" · ")
 
 export type Tone = "vio" | "blue" | "green" | "amber" | "red" | "slate" | "mute"
 

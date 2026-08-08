@@ -3,6 +3,7 @@ import {
   ArtifactId,
   AttemptId,
   BlockId,
+  ContinuationService,
   EventBus,
   EventSeq,
   Journal,
@@ -218,6 +219,21 @@ const cancelRun = Effect.gen(function* () {
       )
 })
 
+/** ADR-008: one canonical session per run, seeded from the task brief and resumed after that. */
+const openTerminal = Effect.gen(function* () {
+  const store = yield* Store
+  const continuation = yield* ContinuationService
+  const runId = RunId.make(yield* pathParam("id"))
+  const run = yield* store.run(runId)
+  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+  const opened = yield* Effect.either(continuation.open(runId))
+  if (opened._tag === "Right") return yield* ok({ opened: true, ...opened.right })
+  // Only a terminal that would not open is the terminal's fault; a journal or git failure is ours.
+  return opened.left._tag === "HerdrError"
+    ? yield* problem(502, "could not open a terminal", opened.left.detail)
+    : yield* problem(500, "internal error", opened.left.detail)
+})
+
 const retryRun = problem(
   501,
   "not implemented",
@@ -326,6 +342,7 @@ const streamRun = Effect.gen(function* () {
 })
 
 type ApiServices =
+  | ContinuationService
   | EventBus
   | Journal
   | RunSupervisor
@@ -357,6 +374,7 @@ export const apiRoutes = (
     yield* router.post("/api/runs/:id/gates/:gateId", route(respond(decideGate)))
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))
     yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
+    yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
     yield* router.post("/api/runs/:id/retry", retryRun)
     yield* router.get("/api/blocks/:id/attempts", route(respond(listAttempts)))
     yield* router.get("/api/attempts/:id", route(respond(getAttempt)))

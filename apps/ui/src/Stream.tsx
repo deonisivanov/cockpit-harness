@@ -5,6 +5,7 @@ import type { ArtifactBody, EventPayload, JournalEvent } from "./model.js"
 import {
   fmtClock,
   fmtDuration,
+  TERMINAL_TITLE,
   toneClass,
   type StreamRow,
 } from "./presentation.js"
@@ -518,7 +519,17 @@ function FailureCard({
   )
 }
 
-function SummaryCard({ row, state }: { row: Extract<StreamRow, { kind: "summary" }>; state: RunState }) {
+function SummaryCard({
+  row,
+  state,
+  onOpenTerminal,
+  busy,
+}: {
+  row: Extract<StreamRow, { kind: "summary" }>
+  state: RunState
+  onOpenTerminal: () => void
+  busy: boolean
+}) {
   const blocks = [...state.blocks.values()]
   const done = blocks.filter((b) => b.status === "succeeded").length
   const attempts = [...state.attempts.values()]
@@ -558,9 +569,11 @@ function SummaryCard({ row, state }: { row: Extract<StreamRow, { kind: "summary"
       <div className="flex items-center gap-2.5 border-t border-white/5 bg-[#0b0b0e] px-4 py-3">
         <button
           type="button"
-          disabled
-          title="Terminal handoff arrives with the continuity phase"
-          className="cursor-not-allowed rounded-md border border-vio/35 bg-vio/10 px-3.5 py-2 font-mono text-[11.5px] font-medium text-vio-hi opacity-50"
+          data-testid="summary-open-terminal"
+          disabled={busy}
+          onClick={onOpenTerminal}
+          title={TERMINAL_TITLE}
+          className="rounded-md border border-vio/35 bg-vio/10 px-3.5 py-2 font-mono text-[11.5px] font-medium text-vio-hi hover:bg-vio/20 disabled:opacity-40"
         >
           Open session in terminal ↗
         </button>
@@ -588,6 +601,7 @@ export interface StreamProps {
   readonly onToggle: (key: string) => void
   readonly onDecide: (gateId: string, approved: boolean, note?: string) => void
   readonly onAnswer: (blockId: string, answer: string) => void
+  readonly onOpenTerminal: () => void
   readonly busy: boolean
   readonly gateError: string | null
   readonly questionError: string | null
@@ -608,6 +622,7 @@ export function Stream({
   onToggle,
   onDecide,
   onAnswer,
+  onOpenTerminal,
   busy,
   gateError,
   questionError,
@@ -765,7 +780,14 @@ export function Stream({
                     />
                   )
                 case "summary":
-                  return <SummaryCard row={row} state={state} />
+                  return (
+                    <SummaryCard
+                      row={row}
+                      state={state}
+                      onOpenTerminal={onOpenTerminal}
+                      busy={busy}
+                    />
+                  )
               }
             }}
           </VList>

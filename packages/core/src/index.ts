@@ -5,8 +5,10 @@ import { CartridgeLoaderLive } from "./CartridgeLoader.js"
 import { ClaudeCodeProviderLive } from "./ClaudeCodeProvider.js"
 import { CodexProviderLive } from "./CodexProvider.js"
 import { CommandRunnerLive } from "./CommandRunner.js"
+import { ContinuationServiceLive } from "./Continuation.js"
 import { DbLive } from "./Db.js"
 import { EventBusLive } from "./EventBus.js"
+import { HerdrClientLive } from "./Herdr.js"
 import { JournalLive } from "./Journal.js"
 import { PluginCatalogLive } from "./PluginCatalog.js"
 import { ProcessSupervisorLive } from "./ProcessSupervisor.js"
@@ -19,17 +21,20 @@ import { WorkflowEngineLive } from "./WorkflowEngine.js"
 export * from "./Analyzer.js"
 export * from "./ArtifactStore.js"
 export * from "./blocks.js"
+export * from "./brief.js"
 export * from "./cartridge.js"
 export * from "./CartridgeLoader.js"
 export * from "./ClaudeCodeProvider.js"
 export * from "./CodexProvider.js"
 export * from "./CommandRunner.js"
+export * from "./Continuation.js"
 export * from "./DaemonLock.js"
 export * from "./Db.js"
 export * from "./errors.js"
 export * from "./EventBus.js"
 export * from "./events.js"
 export * from "./failure.js"
+export * from "./Herdr.js"
 export * from "./ids.js"
 export * from "./Journal.js"
 export * from "./PluginCatalog.js"
@@ -74,3 +79,9 @@ export const PlanningLive = Layer.mergeAll(
   TransformPipelineLive,
   CartridgeLoaderLive,
 ).pipe(Layer.provideMerge(EngineLive))
+
+/** The terminal handoff (plan §16.7); it reads the cartridge for the project's checks. */
+export const ContinuityLive = ContinuationServiceLive.pipe(
+  Layer.provideMerge(HerdrClientLive),
+  Layer.provideMerge(PlanningLive),
+)
