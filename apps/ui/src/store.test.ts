@@ -36,6 +36,17 @@ describe("applyEvents", () => {
     expect(s.startedAt).toBe(started.ts)
   })
 
+  it("holds a recovered run at interrupted until a resume re-opens it", () => {
+    const recovered = fold(
+      ev({ _tag: "RunStarted" }),
+      ev({ _tag: "RunRecovered", lastCheckpoint: "abc" }),
+    )
+    expect(recovered.runStatus).toBe("interrupted")
+
+    const resumed = applyEvents(recovered, [ev({ _tag: "RunResumed" })])
+    expect(resumed.runStatus).toBe("running")
+  })
+
   it("marks a cancelled run cancelled even after blocks were running", () => {
     const s = fold(
       ev({ _tag: "RunStarted" }),

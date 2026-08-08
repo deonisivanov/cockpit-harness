@@ -70,7 +70,7 @@ it("answers unknown ids and malformed bodies in JSON", async () => {
       artifact: api.get("/api/artifacts/nope"),
       runs: api.get("/api/projects/nope/runs"),
       badBody: api.post("/api/projects", { name: "x" }),
-      retry: api.post("/api/runs/nope/retry"),
+      retired: api.post("/api/runs/nope/retry"),
     }),
   )
 
@@ -81,6 +81,6 @@ it("answers unknown ids and malformed bodies in JSON", async () => {
   expect(answers.runs.status).toBe(404)
   expect(answers.badBody.status).toBe(400)
   expect(json<{ error: string }>(answers.badBody).error).toBe("invalid request")
-  // Re-entering a tree is not built; it says so rather than pretending to have run.
-  expect(answers.retry.status).toBe(501)
+  // Re-entry has one verb, `resume`; the placeholder it replaced is gone rather than aliased.
+  expect(answers.retired.status).toBe(404)
 })

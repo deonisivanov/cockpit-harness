@@ -33,6 +33,12 @@ export interface LoopEnv {
     payload: GatePayload,
   ) => Effect.Effect<boolean, JournalError>
   readonly rollback: Effect.Effect<void, never>
+  /**
+   * Where a re-entering run picks the loop up (plan §9): the attempts the journal already spent
+   * stay spent. The body runs before the ceiling is checked, so a loop that had exhausted its
+   * budget gets exactly one more cycle — which is what the user asked for by resuming it.
+   */
+  readonly startAttempt?: number
 }
 
 export interface AttemptInput {
@@ -188,7 +194,7 @@ export const RetryCoordinatorLive = Layer.effect(
           return yield* step(attempt + 1, history)
         })
 
-      return step(1, []).pipe(
+      return step(env.startAttempt ?? 1, []).pipe(
         Effect.timeoutTo({
           duration: Duration.millis(policy.loopTimeoutMs),
           onSuccess: (outcome: AttemptOutcome) => outcome,

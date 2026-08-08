@@ -62,6 +62,12 @@ if (step !== undefined) {
   if (step.delayMs) await new Promise((resolve) => setTimeout(resolve, step.delayMs))
   if (step.hang) hang()
   else {
+    // A session the CLI can no longer resume: it dies only when the flag is there, so a caller
+    // that drops `--resume` and tries again gets through.
+    if (step.failResume && argv.includes("--resume")) {
+      process.stderr.write("No conversation found with session ID\n")
+      process.exit(4)
+    }
     if (step.output !== undefined && process.env.COCKPIT_OUTPUT) {
       writeFileSync(process.env.COCKPIT_OUTPUT, JSON.stringify(step.output))
     }

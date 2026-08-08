@@ -472,22 +472,63 @@ it("refuses to finalize onto a branch whose checkout has uncommitted changes", a
   expect(has(repoPath, "one.txt")).toBe(false)
 })
 
-it("refuses a second finalize of the same run rather than replaying it onto its own result", async () => {
+it("answers a second finalize of the same run with the result it already landed", async () => {
   const result = await withRepo((repo) =>
     Effect.gen(function* () {
       const checkpoints = yield* CheckpointService
       const workspace = yield* withCheckpoints(repo)
       const target = { targetBranch: workspace.targetBranch, mode: "squash" } as const
       const first = yield* checkpoints.finalize(workspace, target)
-      const second = yield* Effect.either(checkpoints.finalize(workspace, target))
-      return { first, second, repo }
+      // Where a run killed between the branch move and the record of its block finishing comes
+      // back to: the tip is already this run's own commit, so replaying it is neither needed nor
+      // allowed — and refusing would fail a run that has in fact landed.
+      const second = yield* checkpoints.finalize(workspace, target)
+      return { first, second, events: payloads(yield* readEvents(runId)), repo }
     }),
   )
 
   const { repoPath, baseCommit } = result.repo
-  expect(result.second).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(result.second).toEqual(result.first)
   expect(git(repoPath, "rev-parse", "main")).toBe(result.first.commit)
   expect(git(repoPath, "rev-list", "--count", `${baseCommit}..main`)).toBe("1")
+  // One landing, and one record of it: the second call added nothing to the journal.
+  expect(result.events.filter((tag) => tag === "RunFinalized")).toHaveLength(1)
+})
+
+it("refuses to finalize onto a branch that someone else moved on", async () => {
+  const result = await withRepo((repo) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService
+      const workspace = yield* withCheckpoints(repo)
+      yield* Effect.promise(() => writeFile(NodePath.join(repo.repoPath, "theirs.txt"), "mine\n"))
+      git(repo.repoPath, "add", "-A")
+      // Around the fixture's gpg and pre-commit hook, the same way a checkpoint commit gets past
+      // them: this stands in for the user's own commit, not for anything Cockpit does.
+      git(
+        repo.repoPath,
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.email=fixture@example.com",
+        "-c",
+        "user.name=Fixture",
+        "commit",
+        "--no-verify",
+        "-m",
+        "a commit this run knows nothing about",
+      )
+      const moved = git(repo.repoPath, "rev-parse", "main")
+      const refused = yield* Effect.either(
+        checkpoints.finalize(workspace, { targetBranch: workspace.targetBranch, mode: "squash" }),
+      )
+      return { moved, refused, repo }
+    }),
+  )
+
+  expect(result.refused).toMatchObject({ _tag: "Left", left: { op: "finalize" } })
+  expect(String(result.refused)).toContain("branched from")
+  // Whoever moved it keeps it: the replay would have reverted their work wholesale.
+  expect(git(result.repo.repoPath, "rev-parse", "main")).toBe(result.moved)
 })
 
 it("refuses to finalize a run that started from a detached checkout", async () => {

@@ -208,9 +208,10 @@ Every event: `{ seq: EventSeq, ts: ISO8601, runId: RunId, blockId?: BlockId, att
 
 ```ts
 type EventPayload =
-  | RunCreated | RunStarted | RunFinished | RunCancelled | RunRecovered
+  | RunCreated | RunStarted | RunFinished | RunCancelled | RunRecovered | RunResumed
   | TreeAnalyzed | TreeTransformed | TreeValidated
   | BlockStarted | BlockFinished | BlockSkipped
+  | BlockReplayed { defId; reason }          // re-entry read this block's result from the journal
   | AttemptStarted | AttemptFinished | AttemptInterrupted
   | SessionStarted | SessionResumed          // provider session lifecycles
   | AgentActivity                            // subagent/tool activity mapped from provider stream
@@ -234,6 +235,67 @@ type EventPayload =
   | FailureFeedbackForwarded { packetRef: ArtifactId }   // the exact packet the next attempt sees
   | OutputChunk { streamKind: "stdout" | "stderr" | "assistant"; excerpt; ref }  // raw output lives in artifacts
 ```
+
+### Run re-entry (settled in Phase 9)
+
+`POST /api/runs/:id/resume` takes an `interrupted` or `failed` run and carries it on; anything else
+is 409, an unknown run 404, and a cancelled run stays cancelled — it was stopped on purpose. It
+answers `202 {runId}` and reports through the normal event stream. `retry` is gone rather than
+aliased: re-entry has one verb. The boot scan stays marking-only (plan §9); a run that restarts
+itself on boot is a worse surprise than a button.
+
+- **The plan is read once, before execution** (`buildResumePlan`), and the walk consults it instead
+  of the journal, so nothing it decides depends on rows the resumed run is itself writing. Its
+  records are keyed by *node* id and spent on the first visit, which is what makes a loop's later
+  iterations real work.
+- **A block whose newest instance is `succeeded` or `skipped` is never executed again** (§17.6). Its
+  result is rehydrated — `ResultProduced.outputInline`, or the `outputRef` artifact read back — into
+  `priorOutputs` under the same node id, and a `BlockReplayed` records that the journal answered for
+  it. `BlockSkipped` could not: that one opens a block row, and the row already exists.
+- **Instance numbering continues.** `executions` is seeded from the recorded instances, so the next
+  execution of `implement` after `implement#2` is `implement#3`; the interrupted instance keeps its
+  own record and its `AttemptInterrupted`.
+- **A loop resumes at the iteration it stopped in.** The iteration is *open* when the block whose
+  verdict closes it (`feedbackRoute.from`, else the body's last block) has closed fewer iterations
+  than the block that opens it has started. Open → the pass continues that iteration and replays
+  what it finished; closed → the pass is the next iteration and the whole body runs again. The
+  ceiling is checked after the body, so a loop that had exhausted its attempts gets exactly one
+  fresh cycle — which is what the user asked for by resuming a failed run — while an interrupted one
+  keeps only what was left. Attempts already *judged* stay spent; an interrupted attempt is not
+  charged, since it was never judged. A body whose closing block runs only under a Condition reads
+  as open, which costs a replay rather than a re-execution.
+- **Failure packets rehydrate as the rendered context**, not as structures: the artifact behind the
+  last `FailureFeedbackForwarded` for that node is exactly what the interrupted attempt was given,
+  so its successor reads the same text and the event is journaled again under the new instance. The
+  structured packet history that feeds no-progress detection does not survive the crash; a resumed
+  loop starts counting repeats afresh.
+- **Gates**: a decision already in the journal is replayed and the gate is not raised again; an
+  undecided one raises a fresh `ApprovalRequested`, since the `Deferred` the old one parked on died
+  with the daemon. An unanswered question re-raises the same way — the attempt is re-run fresh, and
+  only a `sessionPolicy: "continue"` block resumes the session id its interrupted instance recorded.
+- **Workspace**: present → the path is confirmed to still be this run's worktree, whatever it holds
+  uncommitted is kept as a salvage commit under the attempt the interruption left open, then
+  `reset --hard` to the last confirmed success checkpoint and `reconcile`; gone →
+  `WorkspaceManager.restore` detached at that checkpoint with the recorded `targetBranch`, keeping
+  the run's original `baseCommit` — the checkout's commit would otherwise stand in for the base
+  finalize compares the branch against, and refuse every landing. This runs *inside* the resumed
+  run, so a repository that has moved on fails the run with the reason in the journal instead of
+  failing the request. Every re-entry that finds work salvages again, so salvage tags are named
+  after the commit rather than the attempt; the attempt they belong to is on the checkpoint row.
+- **Finalize is not re-landed.** A daemon killed between the branch move and the block's own record
+  of finishing comes back to a target branch that is already at this run's commit. Finalize answers
+  with the result its journaled `RunFinalized` recorded instead of refusing, moving nothing and
+  adding no second record; a branch that anyone *else* moved is still refused.
+- **A session that will not resume is not fatal.** A `continue` block re-entering with the id its
+  interrupted instance recorded falls back to a fresh session when the CLI cannot resume it —
+  `ErrorRaised{signature:"session-unresumable"}`, the seeded id dropped, the same prompt run again.
+- **Re-entry refuses rather than guesses**: a completed block whose output artifact cannot be read
+  back stops the resume (the blocks wired to it would otherwise run against an empty envelope), and
+  the `workflow-tree` artifact is Schema-decoded, so a truncated one reads as "nothing to re-enter".
+- **Planning is not redone**: the tree and the Analyzer's derived policies come from the run's
+  `workflow-tree` artifact. Block definitions come from the cartridge as it stands now, so a project
+  edited since the run started resumes against what it has today. A run interrupted before it had a
+  tree cannot be re-entered, and says so.
 
 ## 10. Persistence schema (SQLite, v1)
 

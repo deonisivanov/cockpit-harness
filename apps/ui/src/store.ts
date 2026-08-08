@@ -105,7 +105,12 @@ export function applyEvents(prev: RunState, incoming: readonly JournalEvent[]): 
         runStatus = "running"
         startedAt ??= e.ts
         break
+      // The scan that writes this one only marks what a dead daemon left behind; nothing is
+      // executing again until a resume says so.
       case "RunRecovered":
+        runStatus = "interrupted"
+        break
+      case "RunResumed":
         runStatus = "running"
         break
       case "RunFinished":

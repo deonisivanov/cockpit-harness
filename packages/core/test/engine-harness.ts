@@ -5,6 +5,7 @@ import {
   EventPayload,
   Journal,
   JournalEvent,
+  ResumePlan,
   RunId,
   RunOutcome,
   Workspace,
@@ -42,6 +43,8 @@ export interface FakeStep {
   readonly echoPrompt?: boolean
   /** Exits with this status before reporting a result, which the adapter reads as a crash. */
   readonly exitCode?: number
+  /** Dies only when invoked with `--resume`, standing in for a session the CLI has lost. */
+  readonly failResume?: boolean
   /** Writes the result to this path instead, and leaves $COCKPIT_OUTPUT a symlink to it. */
   readonly symlinkOutputTo?: string
 }
@@ -71,6 +74,7 @@ export interface Harness {
   readonly start: (
     root: WorkflowNode,
     given?: WorkflowCatalog,
+    resume?: ResumePlan,
   ) => Effect.Effect<RunOutcome, unknown, EngineContext>
 }
 
@@ -125,13 +129,14 @@ export const withEngine = async <A, E>(
       return yield* body({
         runId,
         workspace,
-        start: (root, given) =>
+        start: (root, given, resume) =>
           engine.run({
             runId,
             task: { prompt, projectId: "proj" },
             tree: { runId, templateId: "test", root },
             workspace,
             catalog: given ?? catalog(),
+            resume,
           }),
       })
     }),

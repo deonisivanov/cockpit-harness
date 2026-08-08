@@ -58,6 +58,7 @@ export const LifecyclePayload = Schema.Union(
   Schema.TaggedStruct("RunFinished", { status: Schema.Literal("succeeded", "failed") }),
   Schema.TaggedStruct("RunCancelled", {}),
   Schema.TaggedStruct("RunRecovered", { lastCheckpoint: Schema.optional(CheckpointId) }),
+  Schema.TaggedStruct("RunResumed", {}),
   Schema.TaggedStruct("BlockStarted", { defId: Schema.String, kind: BlockKind }),
   Schema.TaggedStruct("BlockFinished", {
     status: Schema.Literal("succeeded", "failed", "interrupted"),
@@ -152,6 +153,9 @@ export const AncillaryPayload = Schema.Union(
     outputRef: Schema.optional(ArtifactId),
     outputInline: Schema.optional(Schema.Unknown),
   }),
+  // A re-entering run reads a finished block's result out of the journal instead of running it
+  // again (plan §9); `BlockSkipped` cannot say this, since that one opens a block row of its own.
+  Schema.TaggedStruct("BlockReplayed", { defId: Schema.String, reason: Schema.String }),
   Schema.TaggedStruct("QuestionAsked", { question: Schema.String }),
   Schema.TaggedStruct("QuestionAnswered", { answer: Schema.String }),
   Schema.TaggedStruct("ApprovalRequested", { gateId: BlockId, payloadRef: ArtifactId }),

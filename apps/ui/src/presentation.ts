@@ -1,5 +1,12 @@
-import type { EventPayload, JournalEvent, TerminalHandoff } from "./model.js"
+import type { EventPayload, JournalEvent, RunStatus, TerminalHandoff } from "./model.js"
 import type { AttemptState, RunState } from "./store.js"
+
+/** Plan §9: re-entry is offered for a run that stopped without finishing, and for nothing else. */
+export const resumable = (status: RunStatus): boolean =>
+  status === "interrupted" || status === "failed"
+
+export const RESUME_TITLE =
+  "Carries this run on from its last confirmed checkpoint; blocks it already finished are not executed again"
 
 export const TERMINAL_TITLE =
   "Opens the run's canonical session in a terminal, seeded with the task brief"
@@ -182,6 +189,10 @@ export function describe(payload: EventPayload): EventView {
       return { tag: "attempt", tone: payload.verdict === "success" ? "green" : "red", summary: `attempt ${payload.verdict}`, ...none }
     case "BlockSkipped":
       return { tag: "block", tone: "slate", summary: `skipped · ${payload.reason}`, ...none }
+    case "BlockReplayed":
+      return { tag: "resume", tone: "amber", summary: `not re-executed · ${payload.reason}`, ...none }
+    case "RunResumed":
+      return { tag: "resume", tone: "vio", summary: "run resumed", ...none }
     case "RunFinalized":
       return {
         tag: "event",

@@ -5,9 +5,9 @@ import { existsSync, realpathSync } from "node:fs"
 import * as NodePath from "node:path"
 import { cockpitHome } from "./config.js"
 import { JournalError, WorkspaceError } from "./errors.js"
-import type { CheckpointKind, FinalizeMode } from "./events.js"
+import { CheckpointKind, FinalizeMode, lastOf } from "./events.js"
 import { AttemptId, BlockId, CheckpointId, RunId } from "./ids.js"
-import { Journal } from "./Journal.js"
+import { allEvents, Journal } from "./Journal.js"
 
 export interface Workspace {
   readonly projectId: string
@@ -375,7 +375,11 @@ export const CheckpointServiceLive = Layer.effect(
           const paths = yield* changed(workspace)
           if (paths.length === 0) return undefined
           const sha = yield* commitAll(workspace, { ...input, kind: "salvage" })
-          yield* git("checkpoint", workspace.path, "tag", `cockpit/salvage/${input.attemptId}`, sha)
+          // Named after the commit, not the attempt: re-entry salvages whatever the worktree
+          // holds under the attempt the interruption left open, which can happen more than once
+          // for the same attempt, and a tag that already exists would fail the whole re-entry.
+          // The attempt it belonged to is on the checkpoint row, which is where that link lives.
+          yield* git("checkpoint", workspace.path, "tag", `cockpit/salvage/${sha}`, sha)
           return sha
         }).pipe(gitLock.withPermits(1)),
 
@@ -449,6 +453,12 @@ export const CheckpointServiceLive = Layer.effect(
           // Each finalized commit carries a checkpoint's whole tree, so a branch that moved on
           // since the run pinned its base would have that newer work reverted by the replay.
           if (tip !== workspace.baseCommit) {
+            // Unless this run is what moved it: a daemon killed between the branch move and the
+            // block's own record of it re-enters here, and the tip is the commit it already
+            // landed. The RunFinalized that says so is durable, so the answer is that result
+            // rather than a refusal — and the branch is not moved a second time.
+            const landed = lastOf(yield* allEvents(journal, workspace.runId), "RunFinalized")
+            if (landed?.commit === tip) return { commit: landed.commit, commits: landed.commits }
             return yield* refuse(
               `${target} is at ${tip}, not the ${workspace.baseCommit} this run branched from; rebase the run or start a new one rather than overwrite it`,
             )

@@ -44,9 +44,11 @@ export type EventPayload =
   | { readonly _tag: "RunFinished"; readonly status: "succeeded" | "failed" }
   | { readonly _tag: "RunCancelled" }
   | { readonly _tag: "RunRecovered"; readonly lastCheckpoint?: string }
+  | { readonly _tag: "RunResumed" }
   | { readonly _tag: "BlockStarted"; readonly defId: string; readonly kind: BlockKind }
   | { readonly _tag: "BlockFinished"; readonly status: "succeeded" | "failed" | "interrupted" }
   | { readonly _tag: "BlockSkipped"; readonly reason: string }
+  | { readonly _tag: "BlockReplayed"; readonly defId: string; readonly reason: string }
   | { readonly _tag: "AttemptStarted"; readonly number: number; readonly sessionId?: string }
   | { readonly _tag: "AttemptFinished"; readonly verdict: AttemptVerdict }
   | { readonly _tag: "AttemptInterrupted" }

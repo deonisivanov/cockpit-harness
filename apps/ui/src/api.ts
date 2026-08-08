@@ -25,6 +25,8 @@ export interface Source extends EventSource {
     stillPending?: () => boolean,
   ): Promise<void>
   cancel(runId: string): Promise<void>
+  /** Re-enters an interrupted or failed run; what it already finished is not executed again. */
+  resume(runId: string): Promise<void>
   openTerminal(runId: string): Promise<TerminalHandoff>
   insights(target?: InsightTarget): Promise<readonly Insight[]>
 }
@@ -68,6 +70,7 @@ export const httpSource: Source = {
   decideGate: (runId, gateId, approved, note) =>
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),
+  resume: (runId) => post<void>(`/runs/${runId}/resume`),
   openTerminal: (runId) => post<TerminalHandoff>(`/runs/${runId}/terminal`),
   insights: (target) =>
     json<readonly Insight[]>(`/insights${target === undefined ? "" : `?target=${target}`}`),

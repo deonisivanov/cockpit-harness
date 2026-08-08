@@ -4,7 +4,7 @@ import { createServer } from "node:http"
 import { JournalEvent, RetrospectiveLive } from "@cockpit/core"
 import { ConfigProvider, Effect, Layer, Schedule } from "effect"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as NodePath from "node:path"
 import { afterAll } from "vitest"
@@ -55,6 +55,14 @@ export const writeScript = (script: Readonly<Record<string, unknown>>) => {
   const path = NodePath.join(tempDir("cockpitd-script-"), "script.json")
   writeFileSync(path, JSON.stringify(script))
   process.env.COCKPIT_FAKE_SCRIPT = path
+  /** What the stand-in counted for a block; it keeps the tally on disk, next to the script. */
+  return (block: string) => {
+    try {
+      return Number(readFileSync(`${path}.${block}.count`, "utf8"))
+    } catch {
+      return 0
+    }
+  }
 }
 
 export type Settings = Readonly<Record<string, string>>

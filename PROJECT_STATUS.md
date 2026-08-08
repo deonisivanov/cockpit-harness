@@ -27,7 +27,7 @@ Tests at close: **core 260, cockpitd 24, ui 69 (vitest) + 20 Playwright e2e**; a
 ## What remains for v1 (in order)
 
 1. **§17 acceptance on the pilot — owner-interactive.** Runnable checklist: `docs/acceptance-plan.md` (auto vs owner steps, real endpoints/prompts, kill -9 placement, herdr checks). Needs: real provider runs on the owner's subscription, UI gate clicks, daemon kill -9, herdr tab verification. Pilot's dirty tree: isolation half runs as-is; landing half needs `git stash -u` first.
-2. **Known §17 gap, decided not silently skipped:** run RESUME after crash/interrupt is not implemented — recovery marks truthful interrupted state (Phase 2) but the engine cannot re-enter a tree skipping completed blocks; `POST /api/runs/:id/retry` and `/resume` return 501. Flagged in Phase 6, not built in Phase 8 (needs block-instance identity across re-entry + output rehydration). §17 item 6's "resumes from the last confirmed checkpoint" fails as written; the truthful-state half passes. Owner call: accept marking-only for v1 or build re-entry.
+2. ~~Run re-entry 501~~ **built (Phase 9, uncommitted):** `POST /api/runs/:id/resume` re-enters the persisted `workflow-tree` for an `interrupted` or `failed` run (409 otherwise, cancelled stays cancelled); `/retry` removed — one verb. Completed blocks are replayed from the journal with their outputs rehydrated (`BlockReplayed`), loops continue at the iteration they stopped in with the pre-crash retry context, approved gates skip, pending gates re-raise, and the worktree is salvaged+reset or rebuilt via `Workspace.restore`. Boot scan stays marking-only. Semantics settled in `docs/contracts.md` §9 "Run re-entry"; tests in `packages/core/test/resume.test.ts` (real SIGKILL of a child-process engine) and `apps/cockpitd/test/resume.test.ts`.
 3. Fixture refresh on CLI bumps: recordings pin claude 2.1.224 / codex 0.146.0; machine now has claude 2.1.226 — parsers still pass; re-record via `scripts/refresh-fixtures.sh` if drift appears.
 
 ## Key decisions and settlements
@@ -39,7 +39,7 @@ Versions pinned: effect 3.22.1, @effect/platform 0.97.1, platform-node 0.108.1, 
 ## Known problems / open items
 
 1. §17 acceptance not yet run (owner-interactive; see above).
-2. Run re-entry/resume 501 (see above).
+2. Resume soft edge: a loop body whose closing block runs under a Condition reads as "open" for iterations that skipped it — costs a replay, never a repeated effect (documented in contracts §9).
 3. Codex cannot scope run-dir writes outside workspace-write (documented gap).
 4. Cartridge hash/watch covers `.cockpit/**/*.ts` only; jiti timeout catches async stalls only (ADR-007 trust).
 5. Plugin discovery = documented subset (installed_plugins.json v2, top-level commands/skills/agents; sha-versioned plugins fail minVersion).

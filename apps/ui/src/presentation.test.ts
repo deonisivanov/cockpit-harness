@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest"
-import type { EventPayload, JournalEvent, TerminalHandoff } from "./model.js"
+import type { EventPayload, JournalEvent, RunStatus, TerminalHandoff } from "./model.js"
 import {
   buildRows,
   describe as describeEvent,
   filterRows,
   fmtDuration,
   parseDiff,
+  resumable,
   terminalNote,
 } from "./presentation.js"
 import { applyEvents, emptyRunState } from "./store.js"
@@ -21,6 +22,20 @@ const ev = (payload: EventPayload, blockId?: string, attemptId?: string): Journa
 })
 
 const rowsOf = (...events: JournalEvent[]) => buildRows(applyEvents(emptyRunState(), events))
+
+describe("resumable", () => {
+  it("shows the Resume button for a run that stopped without finishing, and for nothing else", () => {
+    const statuses: RunStatus[] = [
+      "created",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled",
+      "interrupted",
+    ]
+    expect(statuses.filter(resumable)).toEqual(["failed", "interrupted"])
+  })
+})
 
 describe("describe", () => {
   it("summarises a command by its argv and marks a failure red", () => {

@@ -148,16 +148,21 @@ see finalize actually land, use a clean checkout (below).
 
 ## 6. `kill -9` mid-run
 
-Regression-covered by `packages/core/test/recovery.test.ts`; this is the real-daemon repeat.
+Regression-covered by `packages/core/test/recovery.test.ts` (truthful marking) and
+`packages/core/test/resume.test.ts` (re-entry after a real SIGKILL); this is the real-daemon repeat.
 
-- [ ] `[auto]` `pnpm --filter @cockpit/core exec vitest run test/recovery.test.ts` is green.
+- [ ] `[auto]` `pnpm --filter @cockpit/core exec vitest run test/recovery.test.ts test/resume.test.ts`
+      is green.
 - [ ] `[owner]` Start the step-1 prompt again. Wait for `aia-test` to start (the longest block, 15 min
       budget), then `kill -9 $(cat ~/.cockpit/daemon.pid)`.
-- [ ] `[auto]` Restart `node apps/cockpitd/dist/main.js`.
-- [ ] `[auto]` The orphaned attempt is `interrupted`, the run resumed from the last confirmed
+- [ ] `[auto]` Restart `node apps/cockpitd/dist/main.js`. The boot scan marks only — the log says
+      `none resumed` — and the run shows as `interrupted` with a Resume button.
+- [ ] `[owner]` Press Resume (or `curl -XPOST localhost:4177/api/runs/$RUN/resume` → `202`).
+- [ ] `[auto]` The orphaned attempt is `interrupted`, the run continued from the last confirmed
       checkpoint, and no completed block re-ran:
-      `curl -s "localhost:4177/api/runs/$RUN/events?limit=500"` — exactly one `BlockFinished` per
-      block id, one `AttemptFinished{verdict:"interrupted"}`.
+      `curl -s "localhost:4177/api/runs/$RUN/events?limit=500"` — one `AttemptFinished{verdict:"interrupted"}`,
+      a `BlockReplayed` for each block that had already succeeded, and no second `BlockStarted` for
+      any of them.
 - [ ] `[auto]` `git -C ~/.cockpit/worktrees/$PROJECT/$RUN log --oneline` ends at that checkpoint.
 - [ ] `[auto]` No orphaned child processes: `pgrep -f "claude|vitest|tsc"` is clean.
 

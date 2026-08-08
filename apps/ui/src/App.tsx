@@ -7,6 +7,8 @@ import {
   buildRows,
   filterRows,
   fmtElapsed,
+  RESUME_TITLE,
+  resumable,
   TERMINAL_TITLE,
   TERMINAL_WRITE_WARNING,
   terminalNote,
@@ -175,6 +177,14 @@ export default function App() {
     void act("run", () => source.cancel(runId))
   }, [act, source, runId])
 
+  const resume = useCallback(() => {
+    if (!runId) return
+    void act("run", async () => {
+      await source.resume(runId)
+      if (project) setRuns(await source.runs(project.id))
+    })
+  }, [act, source, runId, project])
+
   const openTerminal = useCallback(() => {
     if (!runId) return
     void act("terminal", async () => setHandoff(await source.openTerminal(runId)))
@@ -321,6 +331,18 @@ export default function App() {
                     className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
                   >
                     Cancel
+                  </button>
+                )}
+                {resumable(state.runStatus) && (
+                  <button
+                    type="button"
+                    data-testid="resume-run"
+                    disabled={busy}
+                    onClick={resume}
+                    title={RESUME_TITLE}
+                    className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
+                  >
+                    Resume
                   </button>
                 )}
                 {error?.scope === "run" && (

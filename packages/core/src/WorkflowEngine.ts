@@ -26,6 +26,7 @@ import {
   ProviderResult,
   runToResult,
 } from "./Provider.js"
+import { iterationOpen, ResumePlan, resumedIteration } from "./Resume.js"
 import { AttemptInput, AttemptOutcome, RetryCoordinator } from "./RetryCoordinator.js"
 import { clip, outputBudget, renderSlots } from "./text.js"
 import { CheckpointService, Workspace } from "./Workspace.js"
@@ -51,6 +52,11 @@ export interface RunRequest {
   readonly tree: WorkflowTree
   readonly workspace: Workspace
   readonly catalog: WorkflowCatalog
+  /**
+   * Re-entry into a run the journal already holds (plan §9): what it completed is replayed rather
+   * than executed, and its loops carry on where they stopped. Absent for a first execution.
+   */
+  readonly resume?: ResumePlan
 }
 
 export interface RunOutcome {
@@ -106,6 +112,11 @@ interface NodeContext {
   readonly feedback?: AttemptInput["feedback"]
   /** A corrective loop hands its feedback to one block; the rest of the body must not see it. */
   readonly feedbackTo?: BlockId
+  /**
+   * Set inside a loop a re-entering run is opening a new iteration of: what the last iteration
+   * finished belongs to that iteration, not to this one, so the body does the work again.
+   */
+  readonly newIteration?: boolean
 }
 
 const excerpt = (text: string, max = 800) => (text.length <= max ? text : `${clip(text, max)}…`)
@@ -332,21 +343,55 @@ export const WorkflowEngineLive = Layer.effect(
         const invalid = errors[0]
         if (invalid !== undefined) return yield* Effect.fail(invalid)
 
-        yield* journal.startRun(runId)
+        const plan = request.resume
+        // A resumed run was re-opened by whoever reconciled its worktree; it is already running.
+        if (plan === undefined) yield* journal.startRun(runId)
 
         // Rollback needs a target from the first attempt onward, and recovery treats the newest
-        // success checkpoint as the resume point — so the run opens with one.
-        const baseline = yield* checkpoints.checkpoint(workspace, {
-          kind: "success",
-          message: `cockpit: run ${runId} baseline`,
-        })
+        // success checkpoint as the resume point — so the run opens with one. A re-entering run
+        // has that checkpoint already, and its worktree was put back onto it.
+        const baseline =
+          plan?.lastCheckpoint ??
+          (yield* checkpoints.checkpoint(workspace, {
+            kind: "success",
+            message: `cockpit: run ${runId} baseline`,
+          }))
         const state = yield* Ref.make<RunState>({
           outputs: {},
           outputRefs: {},
-          executions: {},
-          sessions: {},
+          // Seeded so the next instance of a node numbers past the ones the journal holds, and a
+          // `continue` block resumes the session its interrupted instance was using.
+          executions: Object.fromEntries(
+            [...(plan?.nodes ?? [])].map(([nodeId, node]) => [nodeId, node.instances]),
+          ),
+          sessions: Object.fromEntries(
+            [...(plan?.nodes ?? [])].flatMap(([nodeId, node]) =>
+              node.session === undefined ? [] : [[nodeId, node.session]],
+            ),
+          ),
           lastCheckpoint: baseline,
         })
+
+        // Each record is spent on the first visit to its node: a loop coming round again finds
+        // nothing to replay and executes, which is what makes the extra iterations real work.
+        const carried = yield* Ref.make(new Map(plan?.nodes ?? []))
+        const settled = yield* Ref.make(new Map(plan?.decisions ?? []))
+
+        const take = <A>(ref: Ref.Ref<Map<string, A>>, key: string) =>
+          Ref.modify(ref, (map) => {
+            const found = map.get(key)
+            if (found === undefined) return [undefined, map] as const
+            const rest = new Map(map)
+            rest.delete(key)
+            return [found, rest] as const
+          })
+
+        /** A gate the run already decided keeps its decision instead of asking a second time. */
+        const approval = (gateId: BlockId, payload: GatePayload) =>
+          Effect.gen(function* () {
+            const decided = yield* take(settled, gateId)
+            return decided ?? (yield* requestApproval(runId, gateId, payload))
+          })
 
         // The target is captured where the loop starts: an iteration that checkpoints partway
         // through must not become the place a later rollback undoes the loop to. The resume point
@@ -727,7 +772,39 @@ export const WorkflowEngineLive = Layer.effect(
                 return yield* drive(answer, session)
               })
 
-            const { result, written } = yield* drive(prompt, input.session.resume)
+            /**
+             * A `continue` block resumes the session its last execution recorded, and that session
+             * can be gone by the time the run comes back to it — GC'd, or left behind by a CLI
+             * that moved on (plan §10). The attempt is not lost with it: the seeded id is dropped
+             * and the same prompt runs once more as a new session, which is what the block would
+             * have done had it never had one to continue.
+             */
+            const seeded = input.session.resume
+            const attempted = drive(prompt, seeded)
+            const { result, written } = yield* (seeded === undefined
+              ? attempted
+              : Effect.catchAll(attempted, (cause) =>
+                  Effect.gen(function* () {
+                    yield* journal.append({
+                      runId,
+                      blockId,
+                      attemptId,
+                      payload: {
+                        _tag: "ErrorRaised",
+                        class: "provider",
+                        signature: "session-unresumable",
+                        message: `resuming session ${seeded} failed (${cause.message}); the attempt continues in a fresh one`,
+                      },
+                    })
+                    yield* Ref.update(state, (value) => ({
+                      ...value,
+                      sessions: Object.fromEntries(
+                        Object.entries(value.sessions).filter(([id]) => id !== node.id),
+                      ),
+                    }))
+                    return yield* drive(prompt, undefined)
+                  }),
+                ))
 
             const observed = yield* Ref.get(seen)
             yield* Ref.update(state, (value) => ({
@@ -928,6 +1005,36 @@ export const WorkflowEngineLive = Layer.effect(
           Effect.gen(function* () {
             const def = defs.get(node.def) as BlockDef
             const policy = policies.get(def.retryPolicy) as RetryPolicy
+            const before = yield* take(carried, node.id)
+
+            // The §9 invariant: a block the journal already finished is never run a second time.
+            // Its result is handed on exactly as the run that produced it handed it on, so a
+            // downstream block cannot tell the interruption happened.
+            const finished = context.newIteration ? undefined : before?.done
+            if (finished !== undefined) {
+              yield* journal.append({
+                runId,
+                blockId: finished.blockId,
+                payload: {
+                  _tag: "BlockReplayed",
+                  defId: def.id,
+                  reason: `${finished.blockId} was already ${finished.status} before the interruption`,
+                },
+              })
+              yield* Ref.update(state, (value) => ({
+                ...value,
+                outputs:
+                  finished.output === undefined
+                    ? value.outputs
+                    : { ...value.outputs, [node.id]: finished.output },
+                outputRefs:
+                  finished.outputRef === undefined
+                    ? value.outputRefs
+                    : { ...value.outputRefs, [node.id]: finished.outputRef },
+              }))
+              return { verdict: "success", output: finished.output } satisfies AttemptOutcome
+            }
+
             const blockId = yield* instanceId(node.id)
             const timeoutMs = node.overrides?.timeoutMs ?? def.timeoutMs
 
@@ -980,7 +1087,13 @@ export const WorkflowEngineLive = Layer.effect(
                   context.feedbackTo === undefined || context.feedbackTo === node.id
                     ? context.feedback
                     : undefined
-                const feedback = (input.feedback ?? inherited)?.rendered
+                // Nothing newer exists on a re-entry: the loop lost its packets with the daemon,
+                // and the rendered context the interrupted attempt was given is still on disk.
+                const rehydrated =
+                  input.feedback === undefined && inherited === undefined
+                    ? before?.feedback
+                    : undefined
+                const feedback = (input.feedback ?? inherited ?? rehydrated)?.rendered
 
                 yield* journal.startAttempt({
                   runId,
@@ -989,6 +1102,13 @@ export const WorkflowEngineLive = Layer.effect(
                   number: input.attempt,
                   sessionId: def.kind === "agent" ? assigned : undefined,
                 })
+                if (rehydrated !== undefined) {
+                  yield* journal.append({
+                    runId,
+                    blockId,
+                    payload: { _tag: "FailureFeedbackForwarded", packetRef: rehydrated.packetRef },
+                  })
+                }
                 const attemptOpen = yield* Ref.make(true)
                 const closeAttempt = (verdict: AttemptVerdict) =>
                   Effect.flatMap(Ref.getAndSet(attemptOpen, false), (open) =>
@@ -1125,8 +1245,11 @@ export const WorkflowEngineLive = Layer.effect(
                   runId,
                   blockId: Effect.succeed(blockId),
                   policy,
-                  gate: (gateId, payload) => requestApproval(runId, gateId, payload),
+                  gate: approval,
                   rollback: rollbackTo(entry),
+                  // A new iteration is new work: only the instance the interruption caught
+                  // carries its spent attempts into the execution that continues it.
+                  startAttempt: (context.newIteration ? 0 : (before?.attempts ?? 0)) + 1,
                 },
                 attempt,
               )
@@ -1204,24 +1327,34 @@ export const WorkflowEngineLive = Layer.effect(
               })
 
             case "Loop": {
-              const target = node.feedbackRoute?.to ?? blocksIn(node.body)[0]?.id
+              const body = blocksIn(node.body)
+              const target = node.feedbackRoute?.to ?? body[0]?.id
+              // Whose verdict ends an iteration: the block a corrective loop learns from, or the
+              // last one the body runs.
+              const source = node.feedbackRoute?.from ?? body.at(-1)?.id
               return Effect.gen(function* () {
                 // Nothing in the body can report a semantic failure, so there is no loop to run.
                 if (target === undefined) return yield* runNode(node.body, context)
                 const entry = (yield* Ref.get(state)).lastCheckpoint
+                // Read, not spent: the body's own visit to that block is what spends the record.
+                const records = yield* Ref.get(carried)
+                const opens = records.get(target)
+                const closes = source === undefined ? undefined : records.get(source)
                 return yield* coordinator.semanticLoop(
                   {
                     runId,
                     blockId: currentInstance(target),
                     policy: policies.get(node.policy) as RetryPolicy,
-                    gate: (gateId, payload) => requestApproval(runId, gateId, payload),
+                    gate: approval,
                     rollback: rollbackTo(entry),
+                    startAttempt: resumedIteration(opens, closes),
                   },
                   (input) =>
                     runNode(node.body, {
                       ...context,
                       feedback: input.feedback,
                       feedbackTo: target,
+                      newIteration: !iterationOpen(opens, closes),
                     }),
                 )
               })
@@ -1229,7 +1362,7 @@ export const WorkflowEngineLive = Layer.effect(
 
             case "Gate":
               return Effect.map(
-                requestApproval(runId, node.id, node.payload),
+                approval(node.id, node.payload),
                 (approved): AttemptOutcome => ({ verdict: approved ? "success" : "cancelled" }),
               )
           }

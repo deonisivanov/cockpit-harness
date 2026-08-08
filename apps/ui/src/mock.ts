@@ -625,6 +625,9 @@ export function mockSource(state: MockState): Source {
     cancel: async () => {
       emit({ _tag: "RunCancelled" })
     },
+    resume: async () => {
+      emit({ _tag: "RunResumed" })
+    },
     insights: async (target) =>
       target === undefined ? INSIGHTS : INSIGHTS.filter((row) => row.target === target),
     openTerminal: async () => ({

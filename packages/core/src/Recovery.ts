@@ -54,8 +54,9 @@ export const recoverInterruptedRuns = Effect.gen(function* () {
   )
 })
 
+/** Marking only: a run that starts itself on boot is a worse surprise than a button to press. */
 export const RecoveryScanLive = Layer.effectDiscard(
   Effect.flatMap(recoverInterruptedRuns, (runs) =>
-    Effect.log(`recovery scan: ${runs.length} interrupted run(s)`),
+    Effect.log(`recovery scan: ${runs.length} interrupted run(s) marked, none resumed`),
   ),
 )

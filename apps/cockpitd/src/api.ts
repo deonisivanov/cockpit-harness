@@ -11,17 +11,14 @@ import {
   JournalEvent,
   outputBudget,
   RetrospectiveService,
-  RetryPolicy,
   RunId,
   Store,
   WorkflowEngine,
-  WorkflowTree,
   WorkspaceManager,
 } from "@cockpit/core"
 import { Chunk, Effect, Fiber, Schema, Stream } from "effect"
-import { readFile } from "node:fs/promises"
 import * as NodePath from "node:path"
-import { RunSupervisor, treeArtifactKind } from "./runs.js"
+import { plannedTree, RunSupervisor, treeArtifactKind } from "./runs.js"
 
 const loopbackNames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"])
 
@@ -92,17 +89,6 @@ const intParam = (
   return Number.isSafeInteger(parsed) && parsed >= 0 ? Math.min(parsed, max) : fallback
 }
 
-interface PlannedTree {
-  readonly tree: WorkflowTree
-  readonly policies: ReadonlyArray<RetryPolicy>
-}
-
-const readJson = (path: string) =>
-  Effect.tryPromise(() => readFile(path, "utf8")).pipe(
-    Effect.flatMap((text) => Effect.try(() => JSON.parse(text) as unknown)),
-    Effect.orElseSucceed(() => undefined),
-  )
-
 const page = (runId: RunId, after: EventSeq, limit: number) =>
   Effect.flatMap(Journal, (journal) =>
     Stream.runCollect(journal.eventsFrom(runId, after, limit)),
@@ -141,10 +127,7 @@ const getRun = Effect.gen(function* () {
   if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
   const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
   // Absent until planning has settled on a tree; the run is `created` until then.
-  const planned =
-    artifact === undefined
-      ? undefined
-      : ((yield* readJson(artifact.path)) as PlannedTree | undefined)
+  const planned = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
   return yield* ok({
     run,
     tree: planned?.tree,
@@ -275,11 +258,28 @@ const getInsight = Effect.gen(function* () {
   return found === undefined ? yield* problem(404, "not found", `insight ${id}`) : yield* ok(found)
 })
 
-const retryRun = problem(
-  501,
-  "not implemented",
-  "re-entering a tree requires the engine to skip blocks the journal already completed; deferred with boot-time resume (plan §9)",
-)
+/**
+ * Plan §9: one verb for re-entry. A cancelled run stays cancelled — it was stopped on purpose —
+ * and a finished one has nothing left to carry on, so only an interrupted or failed run is taken.
+ */
+const resumeRun = Effect.gen(function* () {
+  const store = yield* Store
+  const supervisor = yield* RunSupervisor
+  const runId = RunId.make(yield* pathParam("id"))
+  const run = yield* store.run(runId)
+  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+  if (run.status !== "interrupted" && run.status !== "failed") {
+    return yield* problem(
+      409,
+      "run cannot be resumed",
+      `run ${runId} is ${run.status}; only an interrupted or failed run can be resumed`,
+    )
+  }
+  const resumed = yield* Effect.either(supervisor.resume(runId))
+  return resumed._tag === "Left"
+    ? yield* problem(409, "run cannot be resumed", resumed.left.detail)
+    : yield* ok({ runId }, 202)
+})
 
 /** Under the run: a block id names an instance inside one run, not a row in the whole journal. */
 const listAttempts = Effect.gen(function* () {
@@ -420,7 +420,7 @@ export const apiRoutes = (
     yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
     yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
     yield* router.post("/api/runs/:id/retrospective", route(respond(runRetrospective)))
-    yield* router.post("/api/runs/:id/retry", retryRun)
+    yield* router.post("/api/runs/:id/resume", route(respond(resumeRun)))
     yield* router.get("/api/insights", route(respond(listInsights)))
     yield* router.get("/api/insights/:id", route(respond(getInsight)))
     yield* router.get("/api/runs/:id/blocks/:blockId/attempts", route(respond(listAttempts)))

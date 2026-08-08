@@ -90,6 +90,8 @@ export class Journal extends Context.Tag("cockpit/Journal")<
       runId: RunId,
       lastCheckpoint?: CheckpointId,
     ) => Effect.Effect<void, JournalError>
+    /** Re-opens a run the user asked to continue; only a marked-interrupted or failed one. */
+    readonly resumeRun: (runId: RunId) => Effect.Effect<void, JournalError>
 
     readonly startBlock: (input: StartBlockInput) => Effect.Effect<void, JournalError>
     readonly finishBlock: (
@@ -443,6 +445,18 @@ export const JournalLive = Layer.effect(
           _tag: "RunRecovered",
           lastCheckpoint,
         }),
+
+      resumeRun: (runId) =>
+        commitVoid(
+          "resumeRun",
+          Effect.gen(function* () {
+            yield* requireRunStatus("resumeRun", runId, ["interrupted", "failed"])
+            // The run is open again, so the time it finished is no longer true of it.
+            yield* sql`
+              UPDATE runs SET status = ${"running"}, finished_at = NULL WHERE id = ${runId}`
+            return { runId, payload: { _tag: "RunResumed" } as const }
+          }),
+        ),
 
       startBlock: (input) =>
         commitVoid(
