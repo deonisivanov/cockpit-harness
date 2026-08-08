@@ -22,7 +22,7 @@ Cockpit — local, single-user control room: user prompt → Analyzer picks/para
 
 Tests at close: **core 260, cockpitd 24, ui 69 (vitest) + 20 Playwright e2e**; all green from clean slate. Every phase went through the two-reviewer pass (correctness + AI-slop), all valid findings fixed and amended in.
 
-**Pilot cartridge** lives in `~/Desktop/ai-interview-assistant/.cockpit/` (untracked there by design — owner decides its commit): blocks aia-typecheck/test/lint/format + cargo clippy/test (optional, default on), agent block with the pilot's rules, templates `ai-interview-assistant/guarded-fix` + `quick-task`, transform `append-lint` (format+lint before finalize), validator `no-filtered-checks` (shell-metachar guard). Kit resolves via relative symlink in `.cockpit/node_modules` (file:-dep impossible: kit declares workspace:*).
+**Pilot cartridge** lives in `~/Desktop/ai-interview-assistant/.cockpit/` (owner gitignored it there — stays untracked): **multi-file layout** (aa2686e, Klimov-style): `cockpit.config.ts` assembly + `blocks/` file-per-block (typecheck/test/lint/format + cargo clippy/test optional-default-on + implement via `prompts/implement.md`), `templates/{guarded-fix,quick-task}.ts`, `transforms.ts` (append-lint before finalize), `validators.ts` (no-filtered-checks shell-metachar guard), `policies.ts`, README. Core supports `promptFile` (loader-side IO + realpath containment) and hashes every non-node_modules file under `.cockpit` (length-prefixed digest). Kit resolves via relative symlink in `.cockpit/node_modules` (file:-dep impossible: kit declares workspace:*).
 
 ## What remains for v1 (in order)
 
