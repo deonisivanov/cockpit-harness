@@ -29,6 +29,9 @@ export const terminalNote = (handoff: TerminalHandoff): string =>
       ? ["the worktree was gone, so it was checked out again from the last checkpoint"]
       : []),
     ...(handoff.warning === undefined ? [] : [`herdr was unavailable: ${handoff.warning}`]),
+    ...(handoff.verified === false
+      ? ["the command was typed but the CLI was not confirmed — check the tab"]
+      : []),
   ].join(" · ")
 
 export type Tone = "vio" | "blue" | "green" | "amber" | "red" | "slate" | "mute"

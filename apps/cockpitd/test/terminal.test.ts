@@ -1,4 +1,4 @@
-import { RunRow } from "@cockpit/core"
+import { RunRow, shellLine } from "@cockpit/core"
 import { Effect } from "effect"
 import { existsSync, readFileSync } from "node:fs"
 import * as NodePath from "node:path"
@@ -93,16 +93,17 @@ it(
       "rename the parser field",
       "--focus",
     ])
-    expect(calls[2]).toEqual([
-      "pane",
-      "run",
-      "w1:t9:p1",
-      expect.stringContaining("fake-provider.mjs"),
-      "--session-id",
-      opened.handoff.sessionId,
-      "--",
-      `Read ${opened.handoff.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
-    ])
+    expect(calls[2].slice(0, 3)).toEqual(["pane", "run", "w1:t9:p1"])
+    expect(calls[2]).toHaveLength(4)
+    expect(calls[2][3]).toContain("fake-provider.mjs")
+    expect(calls[2][3]).toContain(
+      shellLine([
+        "--session-id",
+        opened.handoff.sessionId,
+        "--",
+        `Read ${opened.handoff.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
+      ]),
+    )
   },
   twoMinutes,
 )

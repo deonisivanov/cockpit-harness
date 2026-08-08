@@ -16,6 +16,17 @@ const herdrProtocol = 17
 
 const cliTimeoutMs = 15_000
 
+/** Under `cliTimeoutMs`, so `agent wait --timeout` answers before the spawn guard kills it. */
+const agentWaitTimeoutMs = 12_000
+
+/**
+ * `herdr pane run` has no socket API behind it — it types the joined words into the pane's
+ * interactive shell, so the line must be quoted for the shell that will read it. POSIX single
+ * quotes: `'it'\''s'` tokenizes back to `it's` in sh, bash, zsh and fish alike.
+ */
+export const shellLine = (argv: ReadonlyArray<string>): string =>
+  argv.map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(" ")
+
 export type TerminalMode = "herdr" | "ghostty"
 
 export interface OpenTabInput {
@@ -30,6 +41,12 @@ export interface OpenedTab {
   readonly detail: string
   /** Why herdr was passed over; set only when Ghostty took the tab instead. */
   readonly warning?: string
+  /**
+   * herdr types the command into a shell and exits 0 whether or not anything ran, so the CLI
+   * coming up is observed separately (`agent wait`). False means the line was typed, nothing more.
+   * Ghostty hands the argv over `execve` — no shell can swallow it — so that path is always true.
+   */
+  readonly verified: boolean
 }
 
 /**
@@ -124,14 +141,26 @@ export const HerdrClientLive = Layer.effect(
           })
         }
         const tabId = str(record(result?.tab)?.tab_id) ?? "unknown"
-        yield* exec("agent", input.cwd, [herdr, "pane", "run", paneId, ...input.command]).pipe(
+        yield* exec("agent", input.cwd, [herdr, "pane", "run", paneId, shellLine(input.command)]).pipe(
           // The tab is already on the user's screen; naming it is what lets them close it.
           Effect.mapError(
             (cause) =>
               new HerdrError({ op: "agent", detail: `${cause.detail} — tab ${tabId} is now empty` }),
           ),
         )
-        return { mode: "herdr", detail: `${preflighted}, pane ${paneId}` } satisfies OpenedTab
+        const verified = yield* exec("agent", input.cwd, [
+          herdr,
+          "agent",
+          "wait",
+          paneId,
+          "--until",
+          "working",
+          "--until",
+          "idle",
+          "--timeout",
+          String(agentWaitTimeoutMs),
+        ]).pipe(Effect.isSuccess)
+        return { mode: "herdr", detail: `${preflighted}, pane ${paneId}`, verified } satisfies OpenedTab
       })
 
     /** `-e` is Ghostty's "run this command"; the cwd is a config key, so it rides `--args`. */
@@ -146,7 +175,7 @@ export const HerdrClientLive = Layer.effect(
         ...input.command,
       ] as const
       return exec("tab", input.cwd, argv).pipe(
-        Effect.as({ mode: "ghostty", detail: argv.join(" "), warning } satisfies OpenedTab),
+        Effect.as({ mode: "ghostty", detail: argv.join(" "), warning, verified: true } satisfies OpenedTab),
         // Both terminals are gone at this point, so the error has to name both reasons.
         Effect.mapError(
           (cause) => new HerdrError({ op: "tab", detail: `${cause.detail}; herdr: ${warning}` }),

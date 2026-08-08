@@ -47,5 +47,13 @@ if (argv[0] === "pane" && argv[1] === "run") {
   answer({ id: "cli:pane:run", result: { type: "ok" } })
 }
 
+if (argv[0] === "agent" && argv[1] === "wait") {
+  if (process.env.COCKPIT_FAKE_HERDR_WAIT_FAIL === "1") {
+    process.stderr.write("agent wait: timed out before the agent was detected\n")
+    process.exit(1)
+  }
+  answer({ id: "cli:agent:wait", result: { type: "ok", status: "idle" } })
+}
+
 process.stderr.write(`fake herdr: unexpected ${argv.join(" ")}\n`)
 process.exit(2)

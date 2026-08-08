@@ -224,6 +224,8 @@ export interface TerminalHandoff {
   readonly sessionId: string
   readonly warning?: string
   readonly briefPath?: string
+  /** False when the command was typed into the pane but the CLI was never confirmed running. */
+  readonly verified?: boolean
 }
 
 export type InsightTarget = "core" | "cartridge"
