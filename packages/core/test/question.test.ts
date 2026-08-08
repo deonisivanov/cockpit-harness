@@ -82,7 +82,7 @@ it("does not park on a question the retried session never asked", async () => {
   expect(of(result.events, "AttemptFinished")[0].payload.verdict).toBe("semantic-failure")
 }, 60_000)
 
-it("cancels a run that is waiting on an answer", async () => {
+it("leaves a run waiting on an answer open when its fiber is interrupted", async () => {
   const events = await withEngine({ "agent-task:1": { question } }, ({ runId, start }) =>
     Effect.gen(function* () {
       const running = yield* Effect.fork(start(implement))
@@ -94,5 +94,6 @@ it("cancels a run that is waiting on an answer", async () => {
 
   expect(of(events, "AttemptInterrupted")).toHaveLength(1)
   expect(of(events, "BlockFinished")[0].payload.status).toBe("interrupted")
-  expect(of(events, "RunCancelled")).toHaveLength(1)
+  // The engine never closes an interrupted run; that is the supervisor's call.
+  expect(of(events, "RunCancelled")).toHaveLength(0)
 }, 60_000)

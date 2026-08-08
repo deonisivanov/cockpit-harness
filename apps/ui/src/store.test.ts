@@ -47,6 +47,14 @@ describe("applyEvents", () => {
     expect(resumed.runStatus).toBe("running")
   })
 
+  it("holds a stopped run at interrupted, the same state a resume accepts", () => {
+    const stopped = fold(ev({ _tag: "RunStarted" }), ev({ _tag: "RunStopped" }))
+    expect(stopped.runStatus).toBe("interrupted")
+
+    const resumed = applyEvents(stopped, [ev({ _tag: "RunResumed" })])
+    expect(resumed.runStatus).toBe("running")
+  })
+
   it("marks a cancelled run cancelled even after blocks were running", () => {
     const s = fold(
       ev({ _tag: "RunStarted" }),

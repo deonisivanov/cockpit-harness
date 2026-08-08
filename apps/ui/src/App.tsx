@@ -183,6 +183,11 @@ export default function App() {
     void act("run", () => source.cancel(runId))
   }, [act, source, runId])
 
+  const stop = useCallback(() => {
+    if (!runId) return
+    void act("run", () => source.stop(runId))
+  }, [act, source, runId])
+
   const resume = useCallback(() => {
     if (!runId) return
     void act("run", async () => {
@@ -359,9 +364,22 @@ export default function App() {
                 {isLive && (
                   <button
                     type="button"
+                    data-testid="stop-run"
+                    disabled={busy}
+                    onClick={stop}
+                    title="Stops the run; it stays resumable from its last confirmed checkpoint"
+                    className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
+                  >
+                    Stop
+                  </button>
+                )}
+                {isLive && (
+                  <button
+                    type="button"
                     data-testid="cancel-run"
                     disabled={busy}
                     onClick={cancel}
+                    title="Ends the run for good; a cancelled run cannot be resumed"
                     className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
                   >
                     Cancel

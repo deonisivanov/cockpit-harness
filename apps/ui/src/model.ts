@@ -43,6 +43,7 @@ export type EventPayload =
   | { readonly _tag: "RunStarted" }
   | { readonly _tag: "RunFinished"; readonly status: "succeeded" | "failed" }
   | { readonly _tag: "RunCancelled" }
+  | { readonly _tag: "RunStopped" }
   | { readonly _tag: "RunRecovered"; readonly lastCheckpoint?: string }
   | { readonly _tag: "RunResumed" }
   | { readonly _tag: "BlockStarted"; readonly defId: string; readonly kind: BlockKind }

@@ -57,6 +57,8 @@ export const LifecyclePayload = Schema.Union(
   Schema.TaggedStruct("RunStarted", {}),
   Schema.TaggedStruct("RunFinished", { status: Schema.Literal("succeeded", "failed") }),
   Schema.TaggedStruct("RunCancelled", {}),
+  /** A user stop: the run closes as interrupted — open, resumable — unlike a terminal cancel. */
+  Schema.TaggedStruct("RunStopped", {}),
   Schema.TaggedStruct("RunRecovered", { lastCheckpoint: Schema.optional(CheckpointId) }),
   Schema.TaggedStruct("RunResumed", {}),
   Schema.TaggedStruct("BlockStarted", { defId: Schema.String, kind: BlockKind }),

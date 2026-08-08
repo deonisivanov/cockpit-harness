@@ -118,6 +118,16 @@ const illegal = [
       }),
   },
   {
+    name: "stopping an already finished run",
+    steps: (journal: JournalService) =>
+      Effect.gen(function* () {
+        yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+        yield* journal.startRun(runId)
+        yield* journal.finishRun(runId, "failed")
+        yield* journal.stopRun(runId)
+      }),
+  },
+  {
     name: "creating the same run twice",
     steps: (journal: JournalService) =>
       Effect.gen(function* () {
@@ -212,6 +222,23 @@ it("skips a block and cancels the run without touching attempts", async () => {
   expect(status).toBe("cancelled")
   expect(payloads(events)).toEqual(["RunCreated", "RunStarted", "BlockSkipped", "RunCancelled"])
   expect(events[2].payload).toMatchObject({ reason: "toggled off by the analyzer" })
+})
+
+it("closes a stopped run as interrupted, and resume re-opens it", async () => {
+  const [stopped, events] = await withKernel(
+    Effect.gen(function* () {
+      const journal = yield* Journal
+      yield* journal.createRun({ runId, projectId: "p", prompt: "x" })
+      yield* journal.startRun(runId)
+      yield* journal.stopRun(runId)
+      const status = yield* journal.runStatus(runId)
+      yield* journal.resumeRun(runId)
+      return [status, yield* readEvents(runId)] as const
+    }),
+  )
+
+  expect(stopped).toBe("interrupted")
+  expect(payloads(events)).toEqual(["RunCreated", "RunStarted", "RunStopped", "RunResumed"])
 })
 
 it("leaves no event behind when a transition is rejected", async () => {

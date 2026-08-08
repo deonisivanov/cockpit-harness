@@ -69,6 +69,8 @@ export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
     readonly resume: (runId: RunId) => Effect.Effect<void, JournalError>
     /** False when this daemon process does not own the run — a recovered one never does. */
     readonly cancel: (runId: RunId) => Effect.Effect<boolean>
+    /** Like cancel, but the run closes as interrupted and stays resumable. */
+    readonly stop: (runId: RunId) => Effect.Effect<boolean>
   }
 >() {}
 
@@ -91,6 +93,12 @@ export const RunSupervisorLive = Layer.scoped(
     const retrospectives = yield* RetrospectiveService
 
     const running = yield* Ref.make(HashMap.empty<RunId, Fiber.RuntimeFiber<void>>())
+    /**
+     * Why an interrupted run is being unwound. Three cases, and the absent one is load-bearing:
+     * no marker means the daemon itself is going down, so nobody closes the run — the row stays
+     * `running` for the next boot's recovery scan to mark interrupted and resumable.
+     */
+    const closing = yield* Ref.make(HashMap.empty<RunId, "stop" | "cancel">())
 
     /** A project without a cartridge runs on core templates; a broken one is an error, not a default. */
     const cartridgeFor = (repoPath: string) =>
@@ -275,14 +283,28 @@ export const RunSupervisorLive = Layer.scoped(
         yield* retrospectives.analyze(runId)
       }).pipe(Effect.ignoreLogged)
 
+    /**
+     * The one closer of an interrupted run (the engine leaves it open). An external interrupt
+     * unwinds past error handlers, so this runs as a finalizer inside an already-interrupted
+     * fiber — every arm must stay uninterruptible to commit.
+     */
+    const closeInterrupted = (runId: RunId) =>
+      Effect.uninterruptible(
+        Effect.flatMap(Ref.get(closing), (intents) => {
+          const intent = HashMap.get(intents, runId)
+          if (Option.isNone(intent)) return Effect.void
+          return Effect.ignore(
+            intent.value === "stop" ? journal.stopRun(runId) : journal.cancelRun(runId),
+          )
+        }),
+      )
+
     const supervise = (runId: RunId, body: Effect.Effect<unknown, unknown>) =>
       Effect.matchCauseEffect(body, {
         onSuccess: () => Effect.void,
         onFailure: (cause) =>
           Cause.isInterruptedOnly(cause)
-            ? // The engine cancels the run it opened; this is the same close for a cancel that
-              // landed while the run was still being planned.
-              Effect.uninterruptible(Effect.ignore(journal.cancelRun(runId)))
+            ? closeInterrupted(runId)
             : journal
                 .append({
                   runId,
@@ -310,10 +332,22 @@ export const RunSupervisorLive = Layer.scoped(
           const fiber = yield* Effect.interruptible(
             Deferred.await(registered).pipe(
               Effect.zipRight(supervise(runId, body)),
+              // An external interrupt never reaches supervise's handlers — it unwinds past them —
+              // so the close rides a finalizer. It reads the same marker; absent means shutdown.
+              Effect.onInterrupt(() => closeInterrupted(runId)),
               // Interruption resumes past this, which is what keeps a cancelled run out of it.
               Effect.zipRight(retrospect(runId)),
             ),
-          ).pipe(Effect.ensuring(Ref.update(running, HashMap.remove(runId))), Effect.forkIn(scope))
+          ).pipe(
+            // The intent marker dies with the fiber, or a stale "stop" would win over a later
+            // cancel of a run reusing this id.
+            Effect.ensuring(
+              Ref.update(running, HashMap.remove(runId)).pipe(
+                Effect.zipRight(Ref.update(closing, HashMap.remove(runId))),
+              ),
+            ),
+            Effect.forkIn(scope),
+          )
           yield* Ref.update(running, HashMap.set(runId, fiber))
           yield* Deferred.succeed(registered, undefined)
         }),
@@ -373,13 +407,20 @@ export const RunSupervisorLive = Layer.scoped(
           yield* launch(runId, reenter({ run, project, planned, plan }))
         }),
 
-      cancel: (runId) =>
-        Effect.gen(function* () {
-          const fiber = HashMap.get(yield* Ref.get(running), runId)
-          if (Option.isNone(fiber)) return false
-          yield* Fiber.interrupt(fiber.value)
-          return true
-        }),
+      cancel: (runId) => interrupt(runId, "cancel"),
+
+      stop: (runId) => interrupt(runId, "stop"),
+    }
+
+    // Marked before the interrupt, or supervise races an empty map and closes nothing.
+    function interrupt(runId: RunId, intent: "stop" | "cancel") {
+      return Effect.gen(function* () {
+        const fiber = HashMap.get(yield* Ref.get(running), runId)
+        if (Option.isNone(fiber)) return false
+        yield* Ref.update(closing, HashMap.set(runId, intent))
+        yield* Fiber.interrupt(fiber.value)
+        return true
+      })
     }
   }),
 )

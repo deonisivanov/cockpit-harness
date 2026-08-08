@@ -86,6 +86,8 @@ export class Journal extends Context.Tag("cockpit/Journal")<
       status: "succeeded" | "failed",
     ) => Effect.Effect<void, JournalError>
     readonly cancelRun: (runId: RunId) => Effect.Effect<void, JournalError>
+    /** A user stop: closes as interrupted (resumable), narrated by RunStopped. */
+    readonly stopRun: (runId: RunId) => Effect.Effect<void, JournalError>
     readonly recoverRun: (
       runId: RunId,
       lastCheckpoint?: CheckpointId,
@@ -438,6 +440,11 @@ export const JournalLive = Layer.effect(
       cancelRun: (runId) =>
         closeRun("cancelRun", runId, ["created", "running"], "cancelled", {
           _tag: "RunCancelled",
+        }),
+
+      stopRun: (runId) =>
+        closeRun("stopRun", runId, ["created", "running"], "interrupted", {
+          _tag: "RunStopped",
         }),
 
       recoverRun: (runId, lastCheckpoint) =>

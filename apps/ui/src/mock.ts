@@ -631,6 +631,9 @@ export function mockSource(state: MockState): Source {
     cancel: async () => {
       emit({ _tag: "RunCancelled" })
     },
+    stop: async () => {
+      emit({ _tag: "RunStopped" })
+    },
     resume: async () => {
       emit({ _tag: "RunResumed" })
     },

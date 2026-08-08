@@ -7,6 +7,7 @@ import {
   json,
   makeRepo,
   tagged,
+  tempDir,
   waitFor,
   withApi,
   writeScript,
@@ -219,6 +220,82 @@ it(
     expect(tagged(result.found, "AttemptInterrupted")).toHaveLength(1)
     // The fiber is gone, so the second attempt to cancel says so instead of reporting success.
     expect(result.again.status).toBe(409)
+  },
+  2 * minutes,
+)
+
+it(
+  "stops a run into a resumable interrupted state",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* startRun(client, project.id, "hang forever")
+
+        yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length > 0)
+        const stopped = yield* client.post(`/api/runs/${runId}/stop`)
+        const run = yield* Effect.map(client.get(`/api/runs/${runId}`), json<{ run: RunRow }>)
+        const again = yield* client.post(`/api/runs/${runId}/stop`)
+        const resumed = yield* client.post(`/api/runs/${runId}/resume`)
+        yield* waitFor(runId, (found) => tagged(found, "RunResumed").length > 0)
+        return { stopped, run, again, resumed, found: yield* events(runId) }
+      }),
+    )
+
+    expect(result.stopped.status).toBe(200)
+    expect(result.run.run.status).toBe("interrupted")
+    expect(tagged(result.found, "RunStopped")).toHaveLength(1)
+    expect(tagged(result.found, "RunCancelled")).toHaveLength(0)
+    expect(result.again.status).toBe(409)
+    // A stopped run is exactly what /resume re-enters.
+    expect(result.resumed.status).toBe(202)
+  },
+  2 * minutes,
+)
+
+it(
+  "closes nothing on a shutdown interrupt, even after an earlier stop of the same run",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })
+    const repoPath = makeRepo()
+    const home = tempDir("cockpitd-shutdown-home-")
+
+    // Phase 1 ends with the run still in flight: closing the daemon scope is graceful shutdown.
+    // The earlier stop + resume proves the intent marker was cleaned up — a stale "stop" would
+    // close this run as interrupted on the way down instead of leaving it for recovery.
+    const runId = await withApi(
+      (client) =>
+        Effect.gen(function* () {
+          const project = yield* register(client, repoPath)
+          const { runId } = yield* startRun(client, project.id, "hang forever")
+          yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length > 0)
+          yield* client.post(`/api/runs/${runId}/stop`)
+          yield* client.post(`/api/runs/${runId}/resume`)
+          yield* waitFor(runId, (found) => tagged(found, "RunResumed").length > 0)
+          return runId
+        }),
+      { COCKPIT_HOME: home },
+    )
+
+    // Phase 2, same journal: nobody closed the run — the row is still `running`, which is what
+    // the boot scan needs to find to mark it interrupted. This is the test that fails if the
+    // three-case marker is ever collapsed into a set of stop-requested ids.
+    const after = await withApi(
+      (client) =>
+        Effect.gen(function* () {
+          const run = yield* Effect.map(client.get(`/api/runs/${runId}`), json<{ run: RunRow }>)
+          return { status: run.run.status, found: yield* events(runId) }
+        }),
+      { COCKPIT_HOME: home },
+    )
+
+    expect(after.status).toBe("running")
+    expect(tagged(after.found, "RunStopped")).toHaveLength(1)
+    expect(tagged(after.found, "RunCancelled")).toHaveLength(0)
+    expect(tagged(after.found, "RunFinished")).toHaveLength(0)
   },
   2 * minutes,
 )

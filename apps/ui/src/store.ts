@@ -119,6 +119,9 @@ export function applyEvents(prev: RunState, incoming: readonly JournalEvent[]): 
       case "RunCancelled":
         runStatus = "cancelled"
         break
+      case "RunStopped":
+        runStatus = "interrupted"
+        break
       case "BlockStarted":
         if (e.blockId)
           upsertBlock(blocks, e.blockId, {

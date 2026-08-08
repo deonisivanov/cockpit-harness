@@ -186,7 +186,7 @@ it.each([
   30_000,
 )
 
-it("closes the journal cleanly when a run is cancelled mid-block", async () => {
+it("leaves an interrupted run open: the caller owns the close", async () => {
   const events = await withEngine({ "agent-task": { hang: true } }, ({ runId, start }) =>
     Effect.gen(function* () {
       const running = yield* Effect.fork(start(block("implement", agentTask.id)))
@@ -199,8 +199,9 @@ it("closes the journal cleanly when a run is cancelled mid-block", async () => {
   const tags = events.map((event) => event.payload._tag)
   expect(tags).toContain("AttemptInterrupted")
   expect(of(events, "BlockFinished")[0].payload).toMatchObject({ status: "interrupted" })
-  // Nothing may be journaled after the run is closed.
-  expect(tags.at(-1)).toBe("RunCancelled")
+  // Only the caller knows whether this was a Stop, a Cancel, or the daemon going down.
+  expect(of(events, "RunCancelled")).toHaveLength(0)
+  expect(of(events, "RunFinished")).toHaveLength(0)
 }, 30_000)
 
 it("fails a block whose required artifact never appeared", async () => {

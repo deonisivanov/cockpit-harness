@@ -1368,15 +1368,13 @@ export const WorkflowEngineLive = Layer.effect(
           }
         }
 
+        // The engine never closes an interrupted run — the caller owns that close, because only
+        // it knows whether the interruption was a Stop, a Cancel, or the daemon going down.
         const outcome = yield* runNode(request.tree.root, { readOnly: false }).pipe(
           Effect.onExit((exit) =>
-            Exit.isSuccess(exit)
+            Exit.isSuccess(exit) || Exit.isInterrupted(exit)
               ? Effect.void
-              : Effect.ignoreLogged(
-                  Exit.isInterrupted(exit)
-                    ? journal.cancelRun(runId)
-                    : journal.finishRun(runId, "failed"),
-                ),
+              : Effect.ignoreLogged(journal.finishRun(runId, "failed")),
           ),
         )
 

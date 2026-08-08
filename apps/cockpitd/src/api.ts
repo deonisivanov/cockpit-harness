@@ -204,6 +204,22 @@ const cancelRun = Effect.gen(function* () {
       )
 })
 
+const stopRun = Effect.gen(function* () {
+  const store = yield* Store
+  const supervisor = yield* RunSupervisor
+  const runId = RunId.make(yield* pathParam("id"))
+  const run = yield* store.run(runId)
+  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+  const stopped = yield* supervisor.stop(runId)
+  return stopped
+    ? yield* ok({ ok: true })
+    : yield* problem(
+        409,
+        "run is not executing here",
+        `run ${runId} is ${run.status} and is not owned by this daemon process`,
+      )
+})
+
 /** ADR-008: one canonical session per run, seeded from the task brief and resumed after that. */
 const openTerminal = Effect.gen(function* () {
   const store = yield* Store
@@ -418,6 +434,7 @@ export const apiRoutes = (
     yield* router.post("/api/runs/:id/gates/:gateId", route(respond(decideGate)))
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))
     yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
+    yield* router.post("/api/runs/:id/stop", route(respond(stopRun)))
     yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
     yield* router.post("/api/runs/:id/retrospective", route(respond(runRetrospective)))
     yield* router.post("/api/runs/:id/resume", route(respond(resumeRun)))

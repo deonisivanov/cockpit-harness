@@ -402,6 +402,9 @@ export function buildRows(
       case "RunCancelled":
         rows.push(cached(e, { kind: "summary", key, event: e, status: "cancelled" }))
         break
+      case "RunStopped":
+        rows.push(cached(e, { kind: "banner", key, event: e, title: "run stopped — resumable" }))
+        break
       default:
         if (!HIDDEN.has(p._tag))
           rows.push(cached(e, { kind: "event", key, event: e, view: describe(p) }))
