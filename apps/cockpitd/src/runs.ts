@@ -313,18 +313,33 @@ export const RunSupervisorLive = Layer.scoped(
         Effect.flatMap(Ref.get(closing), (intents) => {
           const intent = HashMap.get(intents, runId)
           if (Option.isNone(intent)) return Effect.void
-          return Effect.ignore(
+          return Effect.ignoreLogged(
             intent.value === "stop" ? journal.stopRun(runId) : journal.cancelRun(runId),
           )
         }),
       )
+
+    // Marked before the interrupt, or the close finalizer races an empty map; unmarked right
+    // after it, or a stop racing the run's natural completion leaves a stale marker behind the
+    // ensuring cleanup that already ran.
+    const interrupt = (runId: RunId, intent: "stop" | "cancel") =>
+      Effect.gen(function* () {
+        const fiber = HashMap.get(yield* Ref.get(running), runId)
+        if (Option.isNone(fiber)) return false
+        yield* Ref.update(closing, HashMap.set(runId, intent))
+        yield* Fiber.interrupt(fiber.value)
+        yield* Ref.update(closing, HashMap.remove(runId))
+        return true
+      })
 
     const supervise = (runId: RunId, body: Effect.Effect<unknown, unknown>) =>
       Effect.matchCauseEffect(body, {
         onSuccess: () => Effect.void,
         onFailure: (cause) =>
           Cause.isInterruptedOnly(cause)
-            ? closeInterrupted(runId)
+            ? // External interrupts never reach this handler (they land in the onInterrupt
+              // finalizer below); the guard only keeps an interrupt out of ErrorRaised.
+              Effect.void
             : journal
                 .append({
                   runId,
@@ -353,7 +368,7 @@ export const RunSupervisorLive = Layer.scoped(
             Deferred.await(registered).pipe(
               Effect.zipRight(supervise(runId, body)),
               // An external interrupt never reaches supervise's handlers — it unwinds past them —
-              // so the close rides a finalizer. It reads the same marker; absent means shutdown.
+              // so the close rides a finalizer.
               Effect.onInterrupt(() => closeInterrupted(runId)),
               // Interruption resumes past this, which is what keeps a cancelled run out of it.
               Effect.zipRight(retrospect(runId)),
@@ -477,17 +492,6 @@ export const RunSupervisorLive = Layer.scoped(
           yield* engine.requestSkip(runId, BlockId.make(nodeId))
           return { _tag: "accepted" } as const
         }),
-    }
-
-    // Marked before the interrupt, or supervise races an empty map and closes nothing.
-    function interrupt(runId: RunId, intent: "stop" | "cancel") {
-      return Effect.gen(function* () {
-        const fiber = HashMap.get(yield* Ref.get(running), runId)
-        if (Option.isNone(fiber)) return false
-        yield* Ref.update(closing, HashMap.set(runId, intent))
-        yield* Fiber.interrupt(fiber.value)
-        return true
-      })
     }
   }),
 )

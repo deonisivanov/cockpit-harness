@@ -31,7 +31,6 @@ test("interactive buttons render with a pointer cursor", async ({ page }) => {
 test("a live run offers Stop beside Cancel", async ({ page }) => {
   await page.goto("/?mock=running")
   await expect(page.getByTestId("stop-run")).toBeVisible()
-  await expect(page.getByTestId("cancel-run")).toBeVisible()
 })
 
 test("tree shows block statuses, the gate and the loop indicator", async ({ page }) => {

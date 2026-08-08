@@ -240,7 +240,8 @@ it(
         const run = yield* Effect.map(client.get(`/api/runs/${runId}`), json<{ run: RunRow }>)
         const again = yield* client.post(`/api/runs/${runId}/stop`)
         const resumed = yield* client.post(`/api/runs/${runId}/resume`)
-        yield* waitFor(runId, (found) => tagged(found, "RunResumed").length > 0)
+        // Past the 202: re-entry actually reaches the interrupted block and re-executes it.
+        yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length >= 2)
         return { stopped, run, again, resumed, found: yield* events(runId) }
       }),
     )
@@ -287,6 +288,33 @@ it(
     expect(skipped).toHaveLength(1)
     expect(skipped[0].blockId).toBe("verify")
     expect(tagged(result.found, "RunFinished")[0].payload).toMatchObject({ status: "succeeded" })
+  },
+  2 * minutes,
+)
+
+it(
+  "refuses to stop a run that is still planning",
+  async () => {
+    writeScript({
+      analyzer: { ...chooses("quickfix"), delayMs: 2500 },
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* startRun(client, project.id, "small fix")
+        const stopped = yield* client.post(`/api/runs/${runId}/stop`)
+        const cancelled = yield* client.post(`/api/runs/${runId}/cancel`)
+        return { stopped, cancelled }
+      }),
+    )
+
+    expect(result.stopped.status).toBe(409)
+    expect(json<{ detail: string }>(result.stopped).detail).toContain("cancel it instead")
+    expect(result.cancelled.status).toBe(200)
   },
   2 * minutes,
 )
@@ -348,8 +376,8 @@ it(
     )
 
     // Phase 2, same journal: nobody closed the run — the row is still `running`, which is what
-    // the boot scan needs to find to mark it interrupted. This is the test that fails if the
-    // three-case marker is ever collapsed into a set of stop-requested ids.
+    // the boot scan needs to find to mark it interrupted. This pins the marker cleanup and the
+    // absent-marker no-op: a stale "stop" or a close-on-absent both turn this row interrupted.
     const after = await withApi(
       (client) =>
         Effect.gen(function* () {

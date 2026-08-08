@@ -67,10 +67,11 @@ repository is the caller's error), writes the run row, and forks the run. The fo
 cartridge, builds the registry, calls the Analyzer, applies transforms, writes the executed tree as a
 `workflow-tree` artifact, and hands it to the engine. `resume` reads that artifact back, builds a
 `ResumePlan`, flips the run to `running` (which is also the claim that prevents a second concurrent
-resume), reconciles the worktree, and re-enters the engine. `cancel` interrupts the fiber if this
-daemon owns it. A supervising wrapper turns interruption into `RunCancelled` and any other failure
-into a journaled `ErrorRaised` plus `RunFinished{failed}`, and a finished run triggers the
-retrospective.
+resume), reconciles the worktree, and re-enters the engine. `cancel` and `stop` interrupt the fiber
+if this daemon owns it, marking the intent first; a finalizer closes the run per that marker —
+`cancelled`, `interrupted` (resumable), or, with no marker, not at all, leaving the row for the boot
+scan. Any other failure becomes a journaled `ErrorRaised` plus `RunFinished{failed}`, and a finished
+run triggers the retrospective.
 
 ### HTTP surface
 
@@ -86,6 +87,8 @@ retrospective.
 | `POST /api/runs/:id/gates/:gateId` | `{approved, note?}`; 409 if no gate is awaiting a decision |
 | `POST /api/runs/:id/questions/:blockId` | `{answer}`; 409 if no question is parked |
 | `POST /api/runs/:id/cancel` | 409 if the run is not executing in this daemon process |
+| `POST /api/runs/:id/stop` | Close as `interrupted` (resumable); 409 while planning or not owned |
+| `POST /api/runs/:id/blocks/:blockId/skip` | Record a skip for the node's next visit; 409 when it would starve a later block |
 | `POST /api/runs/:id/terminal` | Open or resume the canonical session; 502 on a terminal failure |
 | `POST /api/runs/:id/retrospective` | 409 while the run is `created` or `running` |
 | `POST /api/runs/:id/resume` | Re-enter; `202 {runId}`, 409 unless `interrupted` or `failed`, 404 unknown |

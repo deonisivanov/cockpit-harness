@@ -208,9 +208,10 @@ Every event: `{ seq: EventSeq, ts: ISO8601, runId: RunId, blockId?: BlockId, att
 
 ```ts
 type EventPayload =
-  | RunCreated | RunStarted | RunFinished | RunCancelled | RunRecovered | RunResumed
+  | RunCreated | RunStarted | RunFinished | RunCancelled | RunStopped | RunRecovered | RunResumed
   | TreeAnalyzed | TreeTransformed | TreeValidated
   | BlockStarted | BlockFinished | BlockSkipped
+  | BlockSkipRequested { nodeId; reason? }   // ancillary: honoured and consumed at the next visit
   | BlockReplayed { defId; reason }          // re-entry read this block's result from the journal
   | AttemptStarted | AttemptFinished | AttemptInterrupted
   | SessionStarted | SessionResumed          // provider session lifecycles

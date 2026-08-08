@@ -370,28 +370,28 @@ export default function App() {
                 {note && <span className="font-sans text-[11.5px] text-ink-4">· {note}</span>}
                 <div className="flex-1" />
                 {isLive && (
-                  <button
-                    type="button"
-                    data-testid="stop-run"
-                    disabled={busy}
-                    onClick={stop}
-                    title="Stops the run; it stays resumable from its last confirmed checkpoint"
-                    className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
-                  >
-                    Stop
-                  </button>
-                )}
-                {isLive && (
-                  <button
-                    type="button"
-                    data-testid="cancel-run"
-                    disabled={busy}
-                    onClick={cancel}
-                    title="Ends the run for good; a cancelled run cannot be resumed"
-                    className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
-                  >
-                    Cancel
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      data-testid="stop-run"
+                      disabled={busy}
+                      onClick={stop}
+                      title="Stops the run; it stays resumable from its last confirmed checkpoint"
+                      className="rounded-md border border-amber/30 px-3 py-1.5 font-sans text-[12px] font-medium text-amber hover:border-amber/60 disabled:opacity-40"
+                    >
+                      Stop
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="cancel-run"
+                      disabled={busy}
+                      onClick={cancel}
+                      title="Ends the run for good; a cancelled run cannot be resumed"
+                      className="rounded-md border border-red/22 px-3 py-1.5 font-sans text-[12px] font-medium text-[#b56a6a] hover:border-red/45 hover:text-red disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
                 {resumable(state.runStatus) && (
                   <button

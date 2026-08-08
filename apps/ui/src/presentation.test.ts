@@ -263,6 +263,13 @@ describe("fmtDuration", () => {
   })
 })
 
+it("renders a stopped run as a resumable banner", () => {
+  const banner = rowsOf(ev({ _tag: "RunStarted" }), ev({ _tag: "RunStopped" })).find(
+    (row) => row.kind === "banner",
+  )
+  expect(banner && "title" in banner && banner.title).toBe("run stopped — resumable")
+})
+
 describe("terminalNote", () => {
   const handoff = (patch: Partial<TerminalHandoff>): TerminalHandoff => ({
     opened: true,

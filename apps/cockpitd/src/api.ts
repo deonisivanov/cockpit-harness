@@ -188,21 +188,34 @@ const answerQuestion = Effect.gen(function* () {
     : yield* ok({ ok: true })
 })
 
-const cancelRun = Effect.gen(function* () {
-  const store = yield* Store
-  const supervisor = yield* RunSupervisor
-  const runId = RunId.make(yield* pathParam("id"))
-  const run = yield* store.run(runId)
-  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
-  const cancelled = yield* supervisor.cancel(runId)
-  return cancelled
-    ? yield* ok({ ok: true })
-    : yield* problem(
-        409,
-        "run is not executing here",
-        `run ${runId} is ${run.status} and is not owned by this daemon process`,
-      )
-})
+const endRun = (intent: "cancel" | "stop") =>
+  Effect.gen(function* () {
+    const store = yield* Store
+    const supervisor = yield* RunSupervisor
+    const runId = RunId.make(yield* pathParam("id"))
+    const run = yield* store.run(runId)
+    if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+    // A run stopped before its tree exists would be interrupted with nothing to re-enter —
+    // unresumable and uncancellable. Cancel is the verb for discarding a run mid-planning.
+    if (intent === "stop") {
+      const tree = yield* store.latestArtifact(runId, treeArtifactKind)
+      if (tree === undefined) {
+        return yield* problem(
+          409,
+          "run is still planning",
+          `run ${runId} has no workflow tree yet — cancel it instead of stopping`,
+        )
+      }
+    }
+    const ended = yield* supervisor[intent](runId)
+    return ended
+      ? yield* ok({ ok: true })
+      : yield* problem(
+          409,
+          "run is not executing here",
+          `run ${runId} is ${run.status} and is not owned by this daemon process`,
+        )
+  })
 
 const skipBlock = Effect.gen(function* () {
   const supervisor = yield* RunSupervisor
@@ -217,22 +230,6 @@ const skipBlock = Effect.gen(function* () {
     case "accepted":
       return yield* ok({ ok: true }, 202)
   }
-})
-
-const stopRun = Effect.gen(function* () {
-  const store = yield* Store
-  const supervisor = yield* RunSupervisor
-  const runId = RunId.make(yield* pathParam("id"))
-  const run = yield* store.run(runId)
-  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
-  const stopped = yield* supervisor.stop(runId)
-  return stopped
-    ? yield* ok({ ok: true })
-    : yield* problem(
-        409,
-        "run is not executing here",
-        `run ${runId} is ${run.status} and is not owned by this daemon process`,
-      )
 })
 
 /** ADR-008: one canonical session per run, seeded from the task brief and resumed after that. */
@@ -448,8 +445,8 @@ export const apiRoutes = (
     yield* router.get("/api/runs/:id/events", route(respond(runEvents)))
     yield* router.post("/api/runs/:id/gates/:gateId", route(respond(decideGate)))
     yield* router.post("/api/runs/:id/questions/:blockId", route(respond(answerQuestion)))
-    yield* router.post("/api/runs/:id/cancel", route(respond(cancelRun)))
-    yield* router.post("/api/runs/:id/stop", route(respond(stopRun)))
+    yield* router.post("/api/runs/:id/cancel", route(respond(endRun("cancel"))))
+    yield* router.post("/api/runs/:id/stop", route(respond(endRun("stop"))))
     yield* router.post("/api/runs/:id/blocks/:blockId/skip", route(respond(skipBlock)))
     yield* router.post("/api/runs/:id/terminal", route(respond(openTerminal)))
     yield* router.post("/api/runs/:id/retrospective", route(respond(runRetrospective)))
