@@ -15,6 +15,8 @@ export interface RailProps {
   readonly expanded: boolean
   readonly onToggle: () => void
   readonly project: Project | null
+  readonly projects: readonly Project[]
+  readonly onSelectProject: (id: string) => void
   readonly runs: readonly Run[]
   readonly selectedRunId: string | null
   readonly onSelect: (runId: string) => void
@@ -34,6 +36,8 @@ export function Rail({
   expanded,
   onToggle,
   project,
+  projects,
+  onSelectProject,
   runs,
   selectedRunId,
   onSelect,
@@ -109,12 +113,19 @@ export function Rail({
           <div className="flex items-center gap-1.5 px-3 pb-2.5">
             {project ? (
               <>
-                <div className="flex flex-1 items-center justify-between rounded-md border border-white/7 bg-[#101014] px-2.5 py-[7px] hover:border-white/14">
-                  <span className="truncate font-sans text-[12.5px] font-medium text-[#c4c4ce]">
-                    {project.name}
-                  </span>
-                  <span className="font-mono text-[9px] text-ink-4">▼</span>
-                </div>
+                <select
+                  data-testid="project-select"
+                  aria-label="select project"
+                  value={project.id}
+                  onChange={(e) => onSelectProject(e.target.value)}
+                  className="flex-1 truncate rounded-md border border-white/7 bg-[#101014] px-2.5 py-[7px] font-sans text-[12.5px] font-medium text-[#c4c4ce] outline-none hover:border-white/14 focus:border-vio/40"
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   data-testid="add-project-toggle"
@@ -233,6 +244,9 @@ function AddProjectForm({
 }) {
   const [name, setName] = useState("")
   const [repoPath, setRepoPath] = useState("")
+  const [pathError, setPathError] = useState<string | null>(null)
+  const message = pathError ?? error
+  const errorId = "add-project-error"
 
   return (
     <form
@@ -240,11 +254,18 @@ function AddProjectForm({
       className="mx-3 mb-2.5 flex flex-col gap-1.5 rounded-md border border-white/8 bg-[#101014] p-2.5"
       onSubmit={(e) => {
         e.preventDefault()
-        if (name.trim() && repoPath.trim()) onSubmit(name.trim(), repoPath.trim())
+        if (!name.trim() || !repoPath.trim()) return
+        // Relative paths resolve against the daemon's cwd, not the user's — a silent wrong-repo hazard.
+        if (!repoPath.trim().startsWith("/")) {
+          setPathError("enter an absolute path")
+          return
+        }
+        onSubmit(name.trim(), repoPath.trim())
       }}
     >
       <input
         data-testid="add-project-name"
+        aria-label="project name"
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="name"
@@ -252,8 +273,14 @@ function AddProjectForm({
       />
       <input
         data-testid="add-project-path"
+        aria-label="repository path"
+        aria-invalid={!!message}
+        aria-describedby={message ? errorId : undefined}
         value={repoPath}
-        onChange={(e) => setRepoPath(e.target.value)}
+        onChange={(e) => {
+          setRepoPath(e.target.value)
+          setPathError(null)
+        }}
         placeholder="/Users/you/path/to/repo"
         className="rounded-sm border border-white/8 bg-[#0a0a0d] px-2 py-1.5 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#5c5c67] focus:border-vio/40"
       />
@@ -265,9 +292,9 @@ function AddProjectForm({
       >
         Register project
       </button>
-      {error && (
-        <div data-testid="add-project-error" role="alert" className="font-sans text-[11px] text-red">
-          {error}
+      {message && (
+        <div id={errorId} data-testid="add-project-error" role="alert" className="font-sans text-[11px] text-red">
+          {message}
         </div>
       )}
     </form>

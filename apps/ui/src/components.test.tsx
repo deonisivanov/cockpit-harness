@@ -36,6 +36,8 @@ describe("Rail", () => {
         expanded
         onToggle={() => {}}
         project={{ id: "p", name: "ai-interview-assistant", repoPath: "~/src/x" }}
+        projects={[{ id: "p", name: "ai-interview-assistant", repoPath: "~/src/x" }]}
+        onSelectProject={() => {}}
         runs={runs}
         selectedRunId="r1"
         onSelect={() => {}}
@@ -93,10 +95,28 @@ describe("Rail", () => {
     expect(html).toMatch(/data-testid="add-project-submit"[^>]*disabled=""/)
   })
 
+  it("labels both register-project inputs for assistive tech", () => {
+    const html = render({ project: null })
+    expect(html).toContain('aria-label="project name"')
+    expect(html).toContain('aria-label="repository path"')
+  })
+
   it("keeps the add-project form collapsed behind a toggle when a project is selected", () => {
     const html = render()
     expect(html).toContain('data-testid="add-project-toggle"')
     expect(html).not.toContain('data-testid="add-project-form"')
+  })
+
+  it("switches the project box to a native select listing every project", () => {
+    const html = render({
+      projects: [
+        { id: "p", name: "ai-interview-assistant", repoPath: "~/src/x" },
+        { id: "p2", name: "second-repo", repoPath: "~/src/y" },
+      ],
+    })
+    expect(html).toContain('data-testid="project-select"')
+    expect(html).toContain('value="p"')
+    expect(html).toContain("second-repo")
   })
 })
 

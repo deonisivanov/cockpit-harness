@@ -181,10 +181,18 @@ cockpit add                      # or: cockpit add /path/to/repo --name my-proje
 cockpit projects                 # list what is registered
 ```
 
-`cockpit` is `apps/cockpitd`'s `bin` entry, so it resolves after a build; from the harness checkout
-`pnpm cockpit add …` runs the same file. It talks to the daemon over the same loopback API and
-reports `daemon is not running — start it with \`pnpm start\`` if nothing is listening. It reads
-`COCKPIT_PORT` to find the daemon.
+`cockpit` is `apps/cockpitd`'s `bin` entry. `pnpm cockpit add …` works from anywhere in the harness
+checkout without any linking, since it's the root `package.json`'s own script. A bare `cockpit` on
+the shell's `PATH` needs one more step: the root `package.json` lists `cockpitd` as a
+devDependency precisely so `pnpm install` links the `bin` into the root `node_modules/.bin`, which
+makes `pnpm exec cockpit add …` work too. A `cockpit` reachable outside the checkout entirely (e.g.
+from a project directory with no relation to this repo) needs a real global link:
+`pnpm --filter cockpitd exec pnpm link --global`.
+
+It talks to the daemon over the same loopback API and reports
+`daemon is not running — start it with \`pnpm start\`` if nothing is listening, or a timeout message
+if the daemon accepted the connection but never answered within 10s. It reads `COCKPIT_PORT` to find
+the daemon.
 
 ```sh
 # 2. The UI: the left rail has an add-project form.

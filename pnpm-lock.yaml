@@ -11,6 +11,9 @@ importers:
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
+      cockpitd:
+        specifier: workspace:*
+        version: link:apps/cockpitd
       eslint:
         specifier: 9.39.5
         version: 9.39.5(jiti@2.7.0)(supports-color@7.2.0)

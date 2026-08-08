@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test"
 
+const json = (body: unknown, status = 200) =>
+  ({ status, contentType: "application/json", body: JSON.stringify(body) }) as const
+
 test("boots with three panels and a populated stream", async ({ page }) => {
   await page.goto("/?mock=running")
 
@@ -7,7 +10,8 @@ test("boots with three panels and a populated stream", async ({ page }) => {
   await expect(page.getByTestId("stream")).toBeVisible()
   await expect(page.getByTestId("tree")).toBeVisible()
 
-  await expect(page.getByText("ai-interview-assistant")).toBeVisible()
+  // Project names live in a native <select>'s <option>s, which Playwright reports as hidden.
+  await expect(page.getByTestId("project-select")).toHaveValue("prj_interview")
   await expect(page.getByText("Fix interview recovery after reconnect").first()).toBeVisible()
 
   // The elapsed clock is derived from the RunStarted event, not a column on the run row.
@@ -64,9 +68,6 @@ test("a recovered run shows the recovery banner", async ({ page }) => {
 })
 
 test("a failed run start surfaces the error and keeps the prompt", async ({ page }) => {
-  const json = (body: unknown) =>
-    ({ status: 200, contentType: "application/json", body: JSON.stringify(body) }) as const
-
   await page.route("**/api/projects", (route) =>
     route.fulfill(json([{ id: "p1", name: "demo", repoPath: "~/src/demo" }])),
   )
@@ -83,9 +84,6 @@ test("a failed run start surfaces the error and keeps the prompt", async ({ page
 })
 
 test("the empty rail state registers a project and selects it", async ({ page }) => {
-  const json = (body: unknown, status = 200) =>
-    ({ status, contentType: "application/json", body: JSON.stringify(body) }) as const
-
   let projects: { id: string; name: string; repoPath: string }[] = []
   await page.route("**/api/projects", (route) => {
     if (route.request().method() !== "POST") return route.fulfill(json(projects))
@@ -104,14 +102,11 @@ test("the empty rail state registers a project and selects it", async ({ page })
   await form.getByTestId("add-project-path").fill("/Users/you/demo")
   await form.getByTestId("add-project-submit").click()
 
-  await expect(page.getByTestId("rail").getByText("demo")).toBeVisible()
+  await expect(page.getByTestId("project-select")).toHaveValue("p_new")
   await expect(page.getByTestId("add-project-form")).toBeHidden()
 })
 
 test("a 400 from project registration shows inline and keeps the typed values", async ({ page }) => {
-  const json = (body: unknown, status = 200) =>
-    ({ status, contentType: "application/json", body: JSON.stringify(body) }) as const
-
   await page.route("**/api/projects", (route) => {
     if (route.request().method() !== "POST")
       return route.fulfill(json([{ id: "p1", name: "demo", repoPath: "~/src/demo" }]))
@@ -129,6 +124,62 @@ test("a 400 from project registration shows inline and keeps the typed values", 
   await expect(form.getByTestId("add-project-error")).toContainText("not a git repository")
   await expect(form.getByTestId("add-project-name")).toHaveValue("bad")
   await expect(form.getByTestId("add-project-path")).toHaveValue("/tmp")
+})
+
+test("the register form rejects a relative repo path before submitting", async ({ page }) => {
+  let posted = false
+  await page.route("**/api/projects", (route) => {
+    if (route.request().method() !== "POST")
+      return route.fulfill(json([{ id: "p1", name: "demo", repoPath: "~/src/demo" }]))
+    posted = true
+    return route.fulfill(json({ id: "p2", name: "x", repoPath: "x" }, 201))
+  })
+  await page.route("**/api/projects/*/runs", (route) => route.fulfill(json([])))
+  await page.goto("/")
+
+  await page.getByTestId("add-project-toggle").click()
+  const form = page.getByTestId("add-project-form")
+  await form.getByTestId("add-project-name").fill("demo")
+  await form.getByTestId("add-project-path").fill("relative/path")
+  await form.getByTestId("add-project-submit").click()
+
+  await expect(form.getByTestId("add-project-error")).toContainText("enter an absolute path")
+  expect(posted).toBe(false)
+})
+
+test("switching the project select clears the old run list and loads the new project's runs", async ({
+  page,
+}) => {
+  await page.route("**/api/projects", (route) =>
+    route.fulfill(
+      json([
+        { id: "p1", name: "first-repo", repoPath: "/repo/one" },
+        { id: "p2", name: "second-repo", repoPath: "/repo/two" },
+      ]),
+    ),
+  )
+  await page.route("**/api/projects/p1/runs", (route) =>
+    route.fulfill(
+      json([
+        {
+          id: "r1",
+          projectId: "p1",
+          prompt: "first project run",
+          status: "succeeded",
+          createdAt: new Date().toISOString(),
+        },
+      ]),
+    ),
+  )
+  await page.route("**/api/projects/p2/runs", (route) => route.fulfill(json([])))
+  await page.goto("/")
+
+  await expect(page.getByTestId("rail-task").filter({ hasText: "first project run" })).toBeVisible()
+
+  await page.getByTestId("project-select").selectOption("p2")
+
+  await expect(page.getByTestId("project-select")).toHaveValue("p2")
+  await expect(page.getByTestId("rail-task")).toHaveCount(0)
 })
 
 test("selecting a tree node filters the stream to that block and clears again", async ({ page }) => {

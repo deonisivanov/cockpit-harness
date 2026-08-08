@@ -84,10 +84,14 @@ export default function App() {
 
   useEffect(() => {
     if (!project) return
-    void source.runs(project.id).then((list) => {
-      setRuns(list)
-      setRunId((current) => current ?? (mock && mock !== "idle" ? (list[0]?.id ?? null) : null))
-    })
+    void source
+      .runs(project.id)
+      .then((list) => {
+        setRuns(list)
+        setRunId((current) => current ?? (mock && mock !== "idle" ? (list[0]?.id ?? null) : null))
+      })
+      // The switch already reset runs/runId to empty; a failed refetch just leaves that in place.
+      .catch(() => {})
   }, [source, project, mock])
 
   useEffect(() => {
@@ -202,17 +206,22 @@ export default function App() {
     })
   }, [act, source, project, prompt])
 
+  const selectProject = useCallback((id: string) => {
+    setSelectedProjectId(id)
+    setRunId(null)
+    setRuns([])
+  }, [])
+
   const addProject = useCallback(
     (name: string, repoPath: string) => {
       void act("project", async () => {
         const created = await source.createProject(name, repoPath)
         setProjects((prev) => [...prev, created])
-        setSelectedProjectId(created.id)
+        selectProject(created.id)
         setAddProjectOpen(false)
-        setRunId(null)
       })
     },
-    [act, source],
+    [act, source, selectProject],
   )
 
   useEffect(() => {
@@ -297,6 +306,8 @@ export default function App() {
           expanded={railOpen}
           onToggle={() => setRailOpen((v) => !v)}
           project={project}
+          projects={projects}
+          onSelectProject={selectProject}
           runs={runs}
           selectedRunId={runId}
           onSelect={(id) => {
