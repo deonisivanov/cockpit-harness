@@ -41,8 +41,6 @@ export interface OpenedContinuation {
   readonly warning?: string
   /** Set when this press seeded a session; a resume reuses the brief that session already read. */
   readonly briefPath?: string
-  /** False when the command was typed into the pane but the CLI was never seen coming up. */
-  readonly verified: boolean
 }
 
 /** One canonical session per run (ADR-008), created on the first press and resumed after it. */
@@ -275,6 +273,7 @@ export const ContinuationServiceLive = Layer.effect(
               briefPath === undefined
                 ? resumeArgv(provider, binary, sessionId)
                 : seedArgv(provider, binary, sessionId, briefPath),
+            agentKind: provider === "codex" ? "codex" : "claude",
           })
 
           // Journaled only once a terminal has the session: a press that opened nothing must
@@ -300,19 +299,11 @@ export const ContinuationServiceLive = Layer.effect(
             payload: {
               _tag: "AgentActivity",
               activity: `terminal:${tab.mode}`,
-              detail:
-                clip(tab.detail, detailChars) + (tab.verified ? "" : " — typed, not verified"),
+              detail: clip(tab.detail, detailChars),
             },
           })
 
-          return {
-            mode: tab.mode,
-            fallback,
-            sessionId,
-            warning: tab.warning,
-            briefPath,
-            verified: tab.verified,
-          }
+          return { mode: tab.mode, fallback, sessionId, warning: tab.warning, briefPath }
         }).pipe(lock.withPermits(1)),
     }
   }),

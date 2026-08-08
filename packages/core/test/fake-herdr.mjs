@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stand-in for the herdr CLI, selected with COCKPIT_HERDR_BIN. It answers the three subcommands
+// Stand-in for the herdr CLI, selected with COCKPIT_HERDR_BIN. It answers the subcommands
 // HerdrClient uses with the shapes `herdr api schema` documents, and records every call so a test
 // can assert what would have reached the real socket. COCKPIT_FAKE_HERDR_DOWN=1 plays a stopped
 // server; COCKPIT_FAKE_HERDR_PROTOCOL overrides the protocol it claims to speak.
@@ -39,20 +39,12 @@ if (argv[0] === "tab" && argv[1] === "create") {
   })
 }
 
-if (argv[0] === "pane" && argv[1] === "run") {
-  if (process.env.COCKPIT_FAKE_HERDR_PANE_FAIL === "1") {
-    process.stderr.write("pane w1:t9:p1 is not accepting input\n")
+if (argv[0] === "agent" && argv[1] === "start") {
+  if (process.env.COCKPIT_FAKE_HERDR_START_FAIL === "1") {
+    process.stderr.write("no agent was detected in pane w1:t9:p1 before the timeout\n")
     process.exit(1)
   }
-  answer({ id: "cli:pane:run", result: { type: "ok" } })
-}
-
-if (argv[0] === "agent" && argv[1] === "wait") {
-  if (process.env.COCKPIT_FAKE_HERDR_WAIT_FAIL === "1") {
-    process.stderr.write("agent wait: timed out before the agent was detected\n")
-    process.exit(1)
-  }
-  answer({ id: "cli:agent:wait", result: { type: "ok", status: "idle" } })
+  answer({ id: "cli:agent:start", result: { type: "ok", status: "idle" } })
 }
 
 process.stderr.write(`fake herdr: unexpected ${argv.join(" ")}\n`)

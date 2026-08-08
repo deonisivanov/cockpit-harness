@@ -13,7 +13,6 @@ import {
   ProviderName,
   renderTaskBrief,
   RunId,
-  shellLine,
   Store,
   Workspace,
   WorkspaceManager,
@@ -35,8 +34,7 @@ const prompt = "rename the parser field and keep the fixtures green"
 const fakeEnv = [
   "COCKPIT_FAKE_HERDR_LOG",
   "COCKPIT_FAKE_HERDR_DOWN",
-  "COCKPIT_FAKE_HERDR_PANE_FAIL",
-  "COCKPIT_FAKE_HERDR_WAIT_FAIL",
+  "COCKPIT_FAKE_HERDR_START_FAIL",
   "COCKPIT_FAKE_HERDR_PROTOCOL",
   "COCKPIT_FAKE_OPEN_LOG",
   "COCKPIT_FAKE_OPEN_FAIL",
@@ -343,35 +341,36 @@ it("seeds one canonical session on the first press and resumes it on the second"
     prompt.slice(0, 48),
     "--focus",
   ])
+  // The binary is not in the argv: `--kind` names the canonical executable herdr itself runs.
   expect(calls[2]).toEqual([
-    "pane",
-    "run",
-    "w1:t9:p1",
-    shellLine([
-      claudeBin,
-      "--session-id",
-      opened.first.sessionId,
-      "--",
-      `Read ${opened.first.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
-    ]),
-  ])
-  expect(calls[3]).toEqual([
     "agent",
-    "wait",
+    "start",
+    "cockpit-w1-t9-p1",
+    "--kind",
+    "claude",
+    "--pane",
     "w1:t9:p1",
-    "--until",
-    "working",
-    "--until",
-    "idle",
     "--timeout",
-    "12000",
+    "30000",
+    "--",
+    "--session-id",
+    opened.first.sessionId,
+    "--",
+    `Read ${opened.first.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
   ])
-  expect(opened.first.verified).toBe(true)
-  expect(calls[6]).toEqual([
-    "pane",
-    "run",
+  expect(calls[5]).toEqual([
+    "agent",
+    "start",
+    "cockpit-w1-t9-p1",
+    "--kind",
+    "claude",
+    "--pane",
     "w1:t9:p1",
-    shellLine([claudeBin, "--resume", opened.first.sessionId]),
+    "--timeout",
+    "30000",
+    "--",
+    "--resume",
+    opened.first.sessionId,
   ])
 })
 
@@ -392,20 +391,32 @@ it("resumes a codex run through the handle codex actually offers", async () => {
   expect(opened.second.sessionId).toBe(opened.first.sessionId)
   const calls = world.herdr()
   expect(calls[2]).toEqual([
-    "pane",
-    "run",
+    "agent",
+    "start",
+    "cockpit-w1-t9-p1",
+    "--kind",
+    "codex",
+    "--pane",
     "w1:t9:p1",
-    shellLine([
-      codexBin,
-      "--",
-      `Read ${opened.first.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
-    ]),
+    "--timeout",
+    "30000",
+    "--",
+    "--",
+    `Read ${opened.first.briefPath} — it is Cockpit's full brief for the task already executed in this worktree. Then wait for my instructions.`,
   ])
-  expect(calls[6]).toEqual([
-    "pane",
-    "run",
+  expect(calls[5]).toEqual([
+    "agent",
+    "start",
+    "cockpit-w1-t9-p1",
+    "--kind",
+    "codex",
+    "--pane",
     "w1:t9:p1",
-    shellLine([codexBin, "resume", "--last"]),
+    "--timeout",
+    "30000",
+    "--",
+    "resume",
+    "--last",
   ])
 })
 
@@ -551,17 +562,25 @@ it("resumes with the provider that opened the session, not the one the run moved
   )
 
   expect(opened.second.sessionId).toBe(opened.first.sessionId)
-  expect(world.herdr()[6]).toEqual([
-    "pane",
-    "run",
+  expect(world.herdr()[5]).toEqual([
+    "agent",
+    "start",
+    "cockpit-w1-t9-p1",
+    "--kind",
+    "claude",
+    "--pane",
     "w1:t9:p1",
-    shellLine([claudeBin, "--resume", opened.first.sessionId]),
+    "--timeout",
+    "30000",
+    "--",
+    "--resume",
+    opened.first.sessionId,
   ])
 })
 
-it("does not open a second terminal when the tab exists but its pane refused the command", async () => {
+it("does not open a second terminal when the tab exists but no agent came up in it", async () => {
   const world = await scenario()
-  process.env.COCKPIT_FAKE_HERDR_PANE_FAIL = "1"
+  process.env.COCKPIT_FAKE_HERDR_START_FAIL = "1"
 
   const failed = await runContinuity(
     world.home,
@@ -574,7 +593,7 @@ it("does not open a second terminal when the tab exists but its pane refused the
 
   expect(failed._tag).toBe("Left")
   expect(failed._tag === "Left" && failed.left._tag).toBe("HerdrError")
-  expect(failed._tag === "Left" && failed.left.detail).toContain("tab w1:t9 is now empty")
+  expect(failed._tag === "Left" && failed.left.detail).toContain("tab w1:t9 is open but has no agent")
   expect(world.opened()).toEqual([])
 })
 
@@ -657,30 +676,6 @@ it("records a herdr protocol it was not verified against", async () => {
   )
   expect(terminal?.payload).toMatchObject({
     detail: expect.stringContaining("herdr protocol 18 (verified against 17)"),
-  })
-})
-
-it("reports a handoff it could not verify, and journals it as typed only", async () => {
-  const world = await scenario()
-  process.env.COCKPIT_FAKE_HERDR_WAIT_FAIL = "1"
-
-  const opened = await runContinuity(
-    world.home,
-    Effect.gen(function* () {
-      yield* seedRun(world.repoPath)
-      const handoff = yield* (yield* ContinuationService).open(runId)
-      return { handoff, events: yield* readEvents(runId) }
-    }),
-    world.settings,
-  )
-
-  expect(opened.handoff.mode).toBe("herdr")
-  expect(opened.handoff.verified).toBe(false)
-  const terminal = opened.events.find(
-    (event) => event.payload._tag === "AgentActivity" && event.payload.activity === "terminal:herdr",
-  )
-  expect(terminal?.payload).toMatchObject({
-    detail: expect.stringContaining("typed, not verified"),
   })
 })
 

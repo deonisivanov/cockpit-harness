@@ -290,11 +290,4 @@ describe("terminalNote", () => {
     expect(note).toContain("checked out again from the last checkpoint")
     expect(note).toContain("herdr was unavailable: socket refused")
   })
-
-  it("flags a handoff whose CLI was never confirmed", () => {
-    expect(terminalNote(handoff({ verified: false }))).toContain(
-      "typed but the CLI was not confirmed",
-    )
-    expect(terminalNote(handoff({ verified: true }))).not.toContain("not confirmed")
-  })
 })
