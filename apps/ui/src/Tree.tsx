@@ -60,10 +60,10 @@ export function Tree({ detail, state, selected, onSelect, onSkip, onClose, float
   return (
     <aside
       data-testid="tree"
-      className={`flex flex-none flex-col self-start overflow-hidden rounded-xl border border-white/8 bg-panel ${
+      className={`flex flex-none flex-col overflow-hidden rounded-xl border border-white/8 bg-panel ${
         floating
           ? "absolute top-3 right-3 z-20 max-h-[calc(100%-1.5rem)] w-[340px] shadow-[0_12px_44px_rgba(0,0,0,0.62)]"
-          : "relative max-h-full w-[352px]"
+          : "relative self-start max-h-full w-[352px]"
       }`}
     >
       <div className="flex flex-none items-baseline gap-2.5 border-b border-white/6 bg-head px-3.5 py-2.5">

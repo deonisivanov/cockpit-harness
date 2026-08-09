@@ -1,12 +1,20 @@
 import { expect, test } from "@playwright/test"
 
 /** Owner-review captures; the artefacts land in apps/ui/screenshots/. */
-const shot = (name: string, mock: string, ready: (page: import("@playwright/test").Page) => Promise<void>) =>
+const settle = (page: import("@playwright/test").Page) => page.waitForTimeout(1200)
+
+const shot = (
+  name: string,
+  mock: string,
+  ready: (page: import("@playwright/test").Page) => Promise<void>,
+  after?: (page: import("@playwright/test").Page) => Promise<void>,
+) =>
   test(`screenshot · ${name}`, async ({ page }) => {
     await page.goto(`/?mock=${mock}`)
     await ready(page)
     // Let the font swap and the entry animation settle so the capture is stable.
-    await page.waitForTimeout(1200)
+    await settle(page)
+    if (after) await after(page)
     await page.screenshot({ path: `screenshots/${name}.png`, fullPage: false })
   })
 
@@ -21,7 +29,6 @@ shot("awaiting-start", "awaiting-start", async (page) => {
   await expect(page.getByTestId("run-workflow")).toBeVisible()
 })
 
-// S9: the workflow panel sizes to its content — short trees stay short, long trees scroll.
 const paneHeights = (page: import("@playwright/test").Page) =>
   page.evaluate(() => {
     const pane = document.querySelector('[data-testid="tree"]') as HTMLElement
@@ -35,21 +42,47 @@ const paneHeights = (page: import("@playwright/test").Page) =>
     }
   })
 
-shot("tree-short", "tree-short", async (page) => {
-  await expect(page.getByTestId("tree-node")).toHaveCount(2)
-  await expect(page.getByTestId("run-workflow")).toBeVisible()
-  const { pane, row } = await paneHeights(page)
-  // The pane sizes to its 2-row content instead of stretching to the row's full height.
-  expect(pane).toBeLessThan(row * 0.5)
-})
+shot(
+  "tree-short",
+  "tree-short",
+  async (page) => {
+    await expect(page.getByTestId("tree-node")).toHaveCount(2)
+    await expect(page.getByTestId("run-workflow")).toBeVisible()
+  },
+  async (page) => {
+    const { pane, row } = await paneHeights(page)
+    expect(pane).toBeLessThan(row * 0.5)
+  },
+)
 
-shot("tree-long", "tree-long", async (page) => {
+shot(
+  "tree-long",
+  "tree-long",
+  async (page) => {
+    await expect(page.getByTestId("tree-node")).toHaveCount(40)
+    await expect(page.getByTestId("run-workflow")).toBeVisible()
+  },
+  async (page) => {
+    const { pane, row, scrollHeight, clientHeight } = await paneHeights(page)
+    // The pane is capped at the row's height and the inner region scrolls instead of the pane growing past it.
+    expect(pane).toBeLessThanOrEqual(row - 23)
+    expect(scrollHeight).toBeGreaterThan(clientHeight)
+  },
+)
+
+test("floating tree pane stays clear of the row's bottom edge", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 980 })
+  await page.goto("/?mock=tree-long")
+  // Below 1280px the tree starts closed; the floating variant only renders once toggled open.
+  await page.getByTestId("tree-toggle").click()
   await expect(page.getByTestId("tree-node")).toHaveCount(40)
-  await expect(page.getByTestId("run-workflow")).toBeVisible()
-  const { pane, row, scrollHeight, clientHeight } = await paneHeights(page)
-  // The pane is capped at the row's height and the inner region scrolls instead of the pane growing past it.
-  expect(pane).toBeLessThanOrEqual(row + 1)
-  expect(scrollHeight).toBeGreaterThan(clientHeight)
+  await settle(page)
+  const { paneBottom, rowBottom } = await page.evaluate(() => {
+    const pane = document.querySelector('[data-testid="tree"]') as HTMLElement
+    const row = pane.parentElement as HTMLElement
+    return { paneBottom: pane.getBoundingClientRect().bottom, rowBottom: row.getBoundingClientRect().bottom }
+  })
+  expect(rowBottom - paneBottom).toBeGreaterThanOrEqual(12)
 })
 
 shot("failed-retry", "retry", async (page) => {

@@ -82,7 +82,6 @@ const TREE: WorkflowNode = {
   ],
 }
 
-/** S9: proves the panel sizes to a short workflow instead of stretching to the row's height. */
 const TREE_SHORT: WorkflowNode = {
   _tag: "Sequence",
   children: [
@@ -91,11 +90,7 @@ const TREE_SHORT: WorkflowNode = {
   ],
 }
 
-/**
- * S9: proves a long workflow scrolls inside the panel instead of stretching it. 40 rows because
- * at ~25px each, 12 (the plan's illustrative count) never exceeds the row's available height in
- * the 1600x980 e2e viewport — this count is chosen to actually overflow it.
- */
+// 40 rows: at ~25px each, they overflow the pane at the 1600x980 e2e viewport.
 const TREE_LONG: WorkflowNode = {
   _tag: "Sequence",
   children: Array.from({ length: 40 }, (_, i) => ({
@@ -263,6 +258,9 @@ expected: cursor == last_event.id   got: cursor == last_flushed.id
 end`,
   },
 }
+
+const templateIdFor = (state: MockState): string =>
+  state === "tree-short" ? "answer" : state === "tree-long" ? "many-blocks" : "bugfix-with-reproduction"
 
 const START = Date.parse("2026-08-08T11:04:02.000Z")
 
@@ -494,13 +492,14 @@ function fixture(state: MockState): Fixture {
   }
 
   if (state === "awaiting-start" || state === "tree-short" || state === "tree-long") {
+    const templateId = templateIdFor(state)
     b.push({ _tag: "RunCreated", projectId: PROJECT, prompt: PROMPT })
     b.push({
       _tag: "TreeAnalyzed",
-      templateId: "bugfix-with-reproduction",
+      templateId,
       rationale:
         "The issue body contains a stack trace and a user-visible symptom, and the repo has an rspec suite with a reproduction harness.",
-      decision: { template: "bugfix-with-reproduction", visualBlocks: true, reviewLoop: true },
+      decision: { template: templateId, visualBlocks: true, reviewLoop: true },
       fallback: false,
     })
     b.push({ _tag: "TreeValidated", errors: [] })
@@ -646,7 +645,7 @@ export function mockSource(state: MockState): Source {
   const treeRoot = state === "tree-short" ? TREE_SHORT : state === "tree-long" ? TREE_LONG : TREE
   const planned: RunDetail = {
     run,
-    tree: { runId: RUN, templateId: "bugfix-with-reproduction", root: treeRoot },
+    tree: { runId: RUN, templateId: templateIdFor(state), root: treeRoot },
     retryPolicies: { "single-attempt": { maxAttempts: 1 }, corrective: { maxAttempts: 3 } },
   }
   // Analyzing starts before planning settles: the first fetch has no tree, the refetch does.
