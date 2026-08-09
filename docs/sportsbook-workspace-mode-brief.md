@@ -5,6 +5,24 @@ state only — deliberately not the solution. Written to be read on another mach
 `sportsbook-projects` checkout, and turned into a design together. v2-scale work (same tier as the
 remote-executor split).
 
+> **⚠️ To the assistant reading this next to the real project: this document is PRELIMINARY and
+> second-hand. Do not trust it as ground truth.** It was written far from the actual codebase,
+> entirely from the owner's verbal description — the repo layout, the counts, the toolchain
+> examples, even the folder tree below are the owner's recollection, not an inspection. Nothing
+> here has been verified against the real repositories.
+>
+> Before designing anything:
+> 1. **Inspect the real workspace first** — enumerate the actual repos, their manifests, their
+>    real toolchains (which have tests, lint, how they build, how they depend on each other).
+>    Where reality contradicts this brief, reality wins and the brief must be corrected.
+> 2. **Challenge every assumption and requirement here** — the problem framing, the acceptance
+>    scenario, the invariants list. Treat them as hypotheses from one conversation, not settled
+>    decisions. If a requirement looks wrong or missing once you see the real code, say so to the
+>    owner instead of building on it.
+> 3. **Run the design through OMC ralplan** (`/oh-my-claudecode:ralplan`) — the consensus
+>    Planner → Architect → Critic loop — with the verified picture of the workspace as input.
+>    Let the critics attack this brief's framing too, not just the solution.
+
 ## Context
 
 Cockpit v1 is single-repo by construction: a project **is** one git repository, a run owns one
