@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { CommandSpec } from "./CommandRunner.js"
 import { ValidationError } from "./errors.js"
+import { Effort, ModelName, ProviderName } from "./Provider.js"
 import { WorkflowTemplate } from "./templates.js"
 import { BlockDef, PluginBinding, RetryPolicy, WorkflowTree } from "./workflow.js"
 
@@ -34,6 +35,14 @@ export const Cartridge = Schema.Struct({
       healthChecks: Schema.Array(
         Schema.Struct({ argv: Schema.NonEmptyArray(Schema.String), timeoutMs: Schema.Int }),
       ),
+    }),
+  ),
+  /** The one agent no block declares: the Analyzer runs before a tree exists to configure it. */
+  analyzer: Schema.optional(
+    Schema.Struct({
+      provider: Schema.optional(ProviderName),
+      model: Schema.optional(ModelName),
+      effort: Schema.optional(Effort),
     }),
   ),
   blocks: Schema.optional(Schema.Array(BlockDef)),

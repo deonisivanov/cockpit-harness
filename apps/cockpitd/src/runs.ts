@@ -218,6 +218,7 @@ export const RunSupervisorLive = Layer.scoped(
           policies: registry.catalog.policies,
           capabilities: yield* capabilities,
           cwd,
+          ...cartridge?.config.analyzer,
         })
 
         // The Analyzer's retry counts arrive as derived policies, so the catalog the run validates

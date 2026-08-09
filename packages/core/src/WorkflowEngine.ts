@@ -766,6 +766,8 @@ export const WorkflowEngineLive = Layer.effect(
                       permissionProfile: input.readOnly
                         ? "read-plus-output"
                         : def.permissionProfile,
+                      model: node.overrides?.model ?? def.model,
+                      effort: node.overrides?.effort ?? def.effort,
                       outputDir: dir,
                       timeoutMs: input.timeoutMs,
                       // Where the result belongs and which block is asking for it; the prompt states

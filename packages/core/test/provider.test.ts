@@ -250,6 +250,43 @@ it("maps permission profiles onto the codex sandbox", () => {
   expect(resumed).not.toContain("-C")
 })
 
+it("names the model and the effort a block asked for, and neither when it asked for none", () => {
+  const claude = claudeArgv("claude", {
+    ...options({ model: "opus", effort: "high" }),
+    cwd: "/w",
+  })
+  expect(claude.join(" ")).toContain("--model opus --effort high")
+
+  const codex = codexArgv("codex", { ...options({ model: "gpt-5.6", effort: "low" }), cwd: "/w" })
+  expect(codex).toContain('model="gpt-5.6"')
+  expect(codex).toContain('model_reasoning_effort="low"')
+
+  // The regression that guards every block naming neither: byte-for-byte the argv of before.
+  expect(claudeArgv("claude", { ...options(), cwd: "/w" })).toEqual([
+    "claude",
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Bash",
+    "--",
+    "do the thing",
+  ])
+  expect(codexArgv("codex", { ...options(), cwd: "/w" })).toEqual([
+    "codex",
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "-c",
+    "sandbox_mode=workspace-write",
+    "--",
+    "do the thing",
+  ])
+})
+
 // A prompt is data. Without the `--` operand marker one that opens with a dash would be read as
 // a flag, and "--dangerously-skip-permissions" is the one that costs the most to get wrong.
 it.each([

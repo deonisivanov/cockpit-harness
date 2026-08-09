@@ -47,6 +47,12 @@ export const codexArgv = (
   ...(options.outputDir === undefined
     ? []
     : ["-c", `sandbox_workspace_write.writable_roots=[${JSON.stringify(options.outputDir)}]`]),
+  // `-m` is a flag `exec resume` does not take, so the model rides the same config override the
+  // sandbox does. Quoted because the value is parsed as TOML and a bare model name is not one.
+  ...(options.model === undefined ? [] : ["-c", `model=${JSON.stringify(options.model)}`]),
+  ...(options.effort === undefined
+    ? []
+    : ["-c", `model_reasoning_effort=${JSON.stringify(options.effort)}`]),
   // Everything after `--` is the prompt operand, so a prompt opening with `-` stays data.
   "--",
   options.prompt,

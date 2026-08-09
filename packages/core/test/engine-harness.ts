@@ -1,5 +1,5 @@
 import { Effect, Schedule } from "effect"
-import { writeFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import * as NodePath from "node:path"
 import {
   EventPayload,
@@ -101,6 +101,10 @@ export const writeScript = async (script: FakeScript) => {
   process.env.COCKPIT_FAKE_SCRIPT = NodePath.join(dir, "script.json")
   return RunId.make(`run-${NodePath.basename(dir)}`)
 }
+
+/** The argv the stand-in was last spawned with for a block; the only place a composed flag shows up. */
+export const spawnedArgv = async (block: string): Promise<ReadonlyArray<string>> =>
+  JSON.parse(await readFile(`${process.env.COCKPIT_FAKE_SCRIPT}.${block}.argv`, "utf8"))
 
 export const withEngine = async <A, E>(
   script: FakeScript,

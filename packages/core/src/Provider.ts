@@ -18,6 +18,16 @@ export type PermissionProfile = typeof PermissionProfile.Type
 export const ProviderName = Schema.Literal("claude-code", "codex")
 export type ProviderName = typeof ProviderName.Type
 
+/**
+ * The set `claude --help` publishes. Codex validates nothing — it forwards whatever
+ * `model_reasoning_effort` holds and the API rejects it — so this is the only CLI-backed set there is.
+ */
+export const Effort = Schema.Literal("low", "medium", "high", "xhigh", "max")
+export type Effort = typeof Effort.Type
+
+/** Names drift faster than this repo does, so only the shape is checked; a wrong one fails at the CLI. */
+export const ModelName = Schema.NonEmptyTrimmedString
+
 export interface ProviderResult {
   readonly sessionId?: SessionId
   readonly isError: boolean
@@ -53,6 +63,9 @@ export interface ProviderRunOptions {
   readonly sessionId?: SessionId
   readonly resumeSessionId?: SessionId
   readonly permissionProfile: PermissionProfile
+  /** Unset is not a default to substitute: the flag is omitted and the CLI's own choice stands. */
+  readonly model?: string
+  readonly effort?: Effort
   /** The run directory holding `$COCKPIT_OUTPUT`; granted to the child on top of its worktree. */
   readonly outputDir?: string
   readonly timeoutMs: number

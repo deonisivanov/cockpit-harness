@@ -35,6 +35,7 @@ const step = (() => {
     calls = 1
   }
   writeFileSync(counter, String(calls))
+  writeFileSync(`${path}.${block}.argv`, JSON.stringify(argv))
   return script[`${block}:${calls}`] ?? script[block]
 })()
 

@@ -59,6 +59,8 @@ export const claudeArgv = (
     : options.sessionId !== undefined
       ? ["--session-id", options.sessionId]
       : []),
+  ...(options.model === undefined ? [] : ["--model", options.model]),
+  ...(options.effort === undefined ? [] : ["--effort", options.effort]),
   ...permissionArgs(options.permissionProfile),
   // The result file lives outside the worktree, so its directory has to be reachable on top of it.
   ...(options.outputDir === undefined ? [] : ["--add-dir", options.outputDir]),

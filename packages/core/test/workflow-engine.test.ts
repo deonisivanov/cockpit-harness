@@ -13,7 +13,16 @@ import {
   WorkflowEngine,
   WorkflowNode,
 } from "../src/index.js"
-import { block, catalog, id, of, startedIds, waitFor, withEngine } from "./engine-harness.js"
+import {
+  block,
+  catalog,
+  id,
+  of,
+  spawnedArgv,
+  startedIds,
+  waitFor,
+  withEngine,
+} from "./engine-harness.js"
 import { readEvents, tempDir } from "./helpers.js"
 
 const summary = (text: string) => ({ output: { summary: text } })
@@ -50,6 +59,22 @@ it("runs a sequence in order and hands each output to the next block", async () 
   })
   expect(startedIds(events)).toEqual(["implement", "verify"])
   expect(of(events, "PromptComposed").at(1)?.blockId).toBe("verify")
+}, 30_000)
+
+it("runs a block under the model its node names and the effort only its definition names", async () => {
+  const opinionated = { ...agentTask, id: "opinionated", model: "sonnet", effort: "low" as const }
+
+  const outcome = await withEngine(
+    { opinionated: summary("done") },
+    ({ start }) =>
+      start(
+        block("implement", opinionated.id, { overrides: { model: "opus" } }),
+        catalog([opinionated]),
+      ),
+  )
+
+  expect(outcome.status).toBe("succeeded")
+  expect((await spawnedArgv(opinionated.id)).join(" ")).toContain("--model opus --effort low")
 }, 30_000)
 
 it("shows the next block only the fields its input contract declares", async () => {

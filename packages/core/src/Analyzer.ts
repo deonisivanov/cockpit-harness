@@ -7,7 +7,7 @@ import { CodexProvider } from "./CodexProvider.js"
 import { JournalError, ProviderError, ValidationError } from "./errors.js"
 import { BlockId, RunId } from "./ids.js"
 import { Journal } from "./Journal.js"
-import { Provider, ProviderName, runToResult } from "./Provider.js"
+import { Effort, Provider, ProviderName, runToResult } from "./Provider.js"
 import { WorkflowTemplate } from "./templates.js"
 import { renderSlots } from "./text.js"
 import {
@@ -213,6 +213,8 @@ export interface AnalyzeInput {
   readonly capabilities: ReadonlyArray<string>
   readonly cwd: string
   readonly provider?: ProviderName
+  readonly model?: string
+  readonly effort?: Effort
 }
 
 export interface Analyzed {
@@ -351,6 +353,8 @@ export const AnalyzerLive = Layer.effect(
             prompt,
             cwd: input.cwd,
             permissionProfile: "read-plus-output",
+            model: input.model,
+            effort: input.effort,
             outputDir: NodePath.dirname(outputPath),
             timeoutMs: analyzerTimeoutMs,
             env: { COCKPIT_OUTPUT: outputPath, COCKPIT_BLOCK: "analyzer" },

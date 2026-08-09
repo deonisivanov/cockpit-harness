@@ -85,6 +85,13 @@ interface BlockDef<I, O> {
   output: ContractField[]           // structurally comparable by the validator; runtime Schema derived from it.
                                     // Agent blocks: output written to $COCKPIT_OUTPUT as JSON
   provider?: "claude-code" | "codex"        // agent blocks
+  model?: string                             // agent blocks; `claude --model` / codex `-c model=…`.
+                                             // Non-empty and otherwise unchecked: names drift, and a
+                                             // wrong one fails at the CLI with a better message.
+  effort?: "low" | "medium" | "high" | "xhigh" | "max"   // agent blocks; `claude --effort`'s own set,
+                                             // reused for codex `-c model_reasoning_effort=…`.
+                                             // Unset emits no flag; BlockOverrides carries both fields,
+                                             // and a node's value wins over its definition's.
   binding?: PluginBinding                    // agent blocks, optional
   promptTemplate?: string                    // agent blocks; rendered with input + failure packet
   promptFile?: string                        // agent blocks; path inside .cockpit, read into promptTemplate
@@ -345,6 +352,8 @@ Run artifacts (prompts, transcripts, long output, packets, briefs) are files und
 export default defineCartridge({
   name: "ai-interview-assistant",
   environment: { healthChecks: [ { argv: ["pnpm", "install", "--frozen-lockfile"], timeoutMs } ] },
+  analyzer:  { provider: "claude-code", model: "opus", effort: "high" },  // all optional; the
+             // Analyzer runs before a tree exists, so it is the one agent no block can configure
   blocks:    [ /* BlockDef[] — project-specific blocks */ ],
   templates: [ /* WorkflowTemplate[] */ ],
   prompts:   { /* named prompt fragments referenced by templates */ },

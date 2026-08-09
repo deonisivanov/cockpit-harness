@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { CommandSpec } from "./CommandRunner.js"
 import { BlockKind, ErrorClass, FinalizeMode, PluginEntry } from "./events.js"
 import { ArtifactId, BlockId, CheckpointId, RunId } from "./ids.js"
-import { PermissionProfile, ProviderName } from "./Provider.js"
+import { Effort, ModelName, PermissionProfile, ProviderName } from "./Provider.js"
 
 /**
  * Brands are erased at runtime, so a type schema over an already-branded id keeps Type and
@@ -85,6 +85,8 @@ export const BlockDef = Schema.Struct({
   input: Schema.Array(ContractField),
   output: Schema.Array(ContractField),
   provider: Schema.optional(ProviderName),
+  model: Schema.optional(ModelName),
+  effort: Schema.optional(Effort),
   binding: Schema.optional(PluginBinding),
   promptTemplate: Schema.optional(Schema.String),
   /** Agent blocks; a path inside `.cockpit` the loader reads into `promptTemplate` (contracts §11). */
@@ -143,13 +145,15 @@ export type GatePayload = typeof GatePayload.Type
 
 /**
  * What a reusable definition cannot know: what to run, how long it may take, which goal this
- * instance serves, and — once the Analyzer has chosen from a template's allowed set — through
- * which plugin.
+ * instance serves, how much thinking this use of it is worth, and — once the Analyzer has chosen
+ * from a template's allowed set — through which plugin.
  */
 export const BlockOverrides = Schema.Struct({
   command: Schema.optional(CommandSpec),
   timeoutMs: Schema.optional(Schema.Int),
   promptTemplate: Schema.optional(Schema.String),
+  model: Schema.optional(ModelName),
+  effort: Schema.optional(Effort),
   binding: Schema.optional(PluginBinding),
 })
 export type BlockOverrides = typeof BlockOverrides.Type

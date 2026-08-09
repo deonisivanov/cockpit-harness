@@ -103,6 +103,22 @@ it("rejects a cartridge that compiles but breaks the contract", async () => {
   expect(failure.detail).toContain("name")
 })
 
+it("takes an analyzer model but not an empty one", async () => {
+  const configured = await writeCartridge(
+    `export default { name: "tuned", analyzer: { model: "opus", effort: "max" } }\n`,
+  )
+  expect(valueOf(await load(configured.repoPath)).config.analyzer).toEqual({
+    model: "opus",
+    effort: "max",
+  })
+
+  const blank = await writeCartridge(`export default { name: "blank", analyzer: { model: "" } }\n`)
+  const failure = errorOf(await load(blank.repoPath))
+
+  expect(failure.stage).toBe("validate")
+  expect(failure.detail).toContain("model")
+})
+
 it("rejects a project with no cartridge file", async () => {
   const repoPath = await tempDir("cockpit-bare-")
   const failure = errorOf(await load(repoPath))

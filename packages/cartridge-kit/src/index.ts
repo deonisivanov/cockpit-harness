@@ -6,6 +6,7 @@ export type {
   Cartridge,
   CommandSpec,
   ContractField,
+  Effort,
   OutputRule,
   PluginBinding,
   RetryPolicy,

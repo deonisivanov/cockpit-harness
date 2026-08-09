@@ -2,6 +2,7 @@ import { Effect, Either } from "effect"
 import { readFile } from "node:fs/promises"
 import { expect, it } from "vitest"
 import {
+  AnalyzeInput,
   Analyzer,
   AnalyzerDecision,
   blocksIn,
@@ -18,7 +19,7 @@ import {
   WorkflowNode,
   WorkflowTemplate,
 } from "../src/index.js"
-import { fakeProviders, writeScript } from "./engine-harness.js"
+import { fakeProviders, spawnedArgv, writeScript } from "./engine-harness.js"
 import { fixturePath, payloads, readEvents, runPlanning, tempHome } from "./helpers.js"
 
 /** A string answer is one the Analyzer talked through without writing the file it was asked for. */
@@ -27,6 +28,7 @@ type Answer = Partial<AnalyzerDecision> | string
 const analyze = async (
   script: Readonly<Record<string, Answer>>,
   prompt = "rename the parser field everywhere it is read",
+  configured: Pick<AnalyzeInput, "model" | "effort"> = {},
 ) => {
   const home = await tempHome()
   const runId = await writeScript(
@@ -53,6 +55,7 @@ const analyze = async (
           policies: coreRetryPolicies,
           capabilities: ["claude-code 9.9.9"],
           cwd: fixturePath("."),
+          ...configured,
         }),
       )
 
@@ -127,6 +130,16 @@ it("instantiates the answer template a question prompt was analyzed into", async
   expect(prompts[0]).toContain("Classify the task's intent")
   expect(prompts[0]).toContain("### answer")
   expect(prompts[0]).toContain("without changing it")
+})
+
+it("runs under the model and effort the cartridge configured for it", async () => {
+  const { outcome } = await analyze({ "analyzer:1": valid }, undefined, {
+    model: "opus",
+    effort: "max",
+  })
+
+  Either.getOrThrow(outcome)
+  expect((await spawnedArgv("analyzer")).join(" ")).toContain("--model opus --effort max")
 })
 
 it("leaves a chosen binding's own slots for the engine to render later", () => {
