@@ -129,7 +129,7 @@ interrupted runs are closed straight through the journal. Any other failure beco
 | `CommandRunner.ts` | Command blocks: spawn, capture bounded stdout/stderr, evaluate `OutputRule`s (`StdoutMatches`, `StderrMatches`, `ArtifactExists`), journal `CommandExecuted`. |
 | `workflow.ts` | The data model: `WorkflowNode` union, `BlockDef`, `RetryPolicy`, `PluginBinding`, `ContractField`, predicates and success criteria, plus `evaluateCheck` and `contractProblems`. |
 | `blocks.ts` | Core block definitions — `agent-task`, `verify-output`, `run-command`, `finalize` — and core policies `single-attempt` and `corrective`. |
-| `templates.ts` | Core workflow templates: `task`, `quickfix`, `guarded-fix`. Core templates bind no plugins. |
+| `templates.ts` | Core workflow templates: `task`, `quickfix`, `guarded-fix`, `answer`. Core templates bind no plugins. |
 | `cartridge.ts` | The `Cartridge` schema and the `TreeTransform` / `TreeValidator` function types. |
 | `TemplateRegistry.ts` | Merges core and cartridge catalogs: cartridge templates are namespaced `<name>/<id>`, block ids share one namespace and a collision is refused, retry policies override by id. |
 | `WorkflowValidator.ts` | Walks the tree in execution order and rejects: unknown blocks or policies, duplicate ids, wrong-kind blocks, non-positive timeouts, escaping artifact globs, unsatisfied input contracts, parallel write conflicts, malformed predicates, loops without exits, and double-retry hazards. |

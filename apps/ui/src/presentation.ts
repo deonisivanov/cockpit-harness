@@ -146,15 +146,12 @@ export function describe(payload: EventPayload): EventView {
         ...none,
       }
     case "ResultProduced": {
-      // An answer run's whole product is one string field, so the row says it. A result with no
-      // string in it — a verdict, a commit — has nothing worth a line and keeps the fixed one.
+      // Only answerQuestion's `answer` and agentTask's `summary` are meant as a preview; a finalize
+      // commit stays the fixed label since RunFinalized's own row already renders it.
       const inline = payload.outputInline
-      const text =
-        typeof inline === "object" && inline !== null
-          ? Object.values(inline).find(
-              (value): value is string => typeof value === "string" && value.length > 0,
-            )
-          : undefined
+      const record = typeof inline === "object" && inline !== null ? (inline as Record<string, unknown>) : undefined
+      const field = record?.answer ?? record?.summary
+      const text = typeof field === "string" && field.length > 0 ? field : undefined
       return {
         tag: "result",
         tone: "green",

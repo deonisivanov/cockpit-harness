@@ -10,7 +10,6 @@ import {
   coreTemplates,
   correctivePolicy,
   defaultDecision,
-  finalize,
   instantiate,
   Journal,
   PluginBinding,
@@ -106,18 +105,12 @@ it("ships core templates that pass the validator however their optional blocks a
 
 it("answers a question with one read-only block and nothing to land", () => {
   const template = coreTemplates.find((entry) => entry.id === "answer")!
-  const { root, policies } = instantiate(template, defaultDecision(template), coreRetryPolicies)
+  const { root } = instantiate(template, defaultDecision(template), coreRetryPolicies)
 
   const blocks = blocksIn(root)
   expect(blocks).toHaveLength(1)
   const def = coreBlocks.find((entry) => entry.id === blocks[0].def)
   expect(def).toMatchObject({ workspaceAccess: "read", permissionProfile: "read-plus-output" })
-
-  const errors = validateWorkflow(
-    { runId: RunId.make("seed"), templateId: template.id, root },
-    { blocks: coreBlocks, policies },
-  )
-  expect(errors.map((error) => error.message)).toEqual([])
 })
 
 it("instantiates the answer template a question prompt was analyzed into", async () => {
@@ -131,15 +124,6 @@ it("instantiates the answer template a question prompt was analyzed into", async
   expect(analyzed.tree.templateId).toBe("answer")
   expect(ids(analyzed.tree.root)).toEqual(["answer"])
 
-  const blocks = blocksIn(analyzed.tree.root)
-  expect(
-    blocks.filter(
-      (node) => coreBlocks.find((def) => def.id === node.def)?.workspaceAccess === "write",
-    ),
-  ).toEqual([])
-  expect(blocks.some((node) => node.def === finalize.id)).toBe(false)
-
-  // The classification and the template's own description are what the Analyzer read to get here.
   expect(prompts[0]).toContain("Classify the task's intent")
   expect(prompts[0]).toContain("### answer")
   expect(prompts[0]).toContain("without changing it")

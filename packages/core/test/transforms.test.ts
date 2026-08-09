@@ -124,32 +124,30 @@ it("diffs a transform that edits the tree in place instead of rebuilding it", as
   expect(diffs[0]).toContain('root.templateId: "start" -> "mutated"')
 })
 
-/**
- * A cartridge appends its quality gates before whatever finalize the tree has, and most trees have
- * none — quickfix and guarded-fix both end at their loop. A transform that skipped a finalize-less
- * tree would strip the project's gates from exactly those runs.
- */
-it("applies an append-before-finalize transform to a tree that has no finalize", async () => {
-  const { outcome } = await runPipeline(
-    cartridge({
-      transforms: [
-        {
-          name: "append-lint",
-          apply: (tree) => ({
-            ...tree,
-            root: {
-              _tag: "Sequence",
-              children: [
-                tree.root,
-                block("lint", runCommand.id, {
-                  overrides: { command: { argv: ["bash", "-lc", "npm run lint"] } },
-                }),
-              ],
-            },
-          }),
-        },
-      ],
-    }),
+const isFinalizeBlock = (node: WorkflowNode): boolean =>
+  node._tag === "Block" && node.def === finalize.id
+
+const appendBeforeFinalize = (tree: WorkflowTree): WorkflowTree => {
+  const gate = block("lint", runCommand.id, {
+    overrides: { command: { argv: ["bash", "-lc", "npm run lint"] } },
+  })
+  const root = tree.root
+  if (root._tag === "Sequence" && root.children.some(isFinalizeBlock)) {
+    return {
+      ...tree,
+      root: {
+        ...root,
+        children: root.children.flatMap((child) => (isFinalizeBlock(child) ? [gate, child] : [child])),
+      },
+    }
+  }
+  return { ...tree, root: { _tag: "Sequence", children: [root, gate] } }
+}
+
+// Appending unconditionally would land the gate after finalize on any tree that already has one.
+it("appends the gate after a finalize-less tree, and before finalize on one that has it", async () => {
+  const withoutFinalize = await runPipeline(
+    cartridge({ transforms: [{ name: "append-lint", apply: appendBeforeFinalize }] }),
     {
       _tag: "Sequence",
       children: [
@@ -158,10 +156,29 @@ it("applies an append-before-finalize transform to a tree that has no finalize",
       ],
     },
   )
+  expect(blocksIn(Either.getOrThrow(withoutFinalize.outcome).root).map((node) => node.id)).toEqual([
+    "implement",
+    "verify",
+    "lint",
+  ])
 
-  const tree = Either.getOrThrow(outcome)
-  expect(blocksIn(tree.root).map((node) => node.id)).toEqual(["implement", "verify", "lint"])
-  expect(blocksIn(tree.root).some((node) => node.def === finalize.id)).toBe(false)
+  const withFinalize = await runPipeline(
+    cartridge({ transforms: [{ name: "append-lint", apply: appendBeforeFinalize }] }),
+    {
+      _tag: "Sequence",
+      children: [
+        block("implement", agentTask.id),
+        block("verify", verifyOutput.id, { inputs: [id("implement")] }),
+        block("finalize", finalize.id),
+      ],
+    },
+  )
+  expect(blocksIn(Either.getOrThrow(withFinalize.outcome).root).map((node) => node.id)).toEqual([
+    "implement",
+    "verify",
+    "lint",
+    "finalize",
+  ])
 })
 
 it("hands every transform the project context", async () => {

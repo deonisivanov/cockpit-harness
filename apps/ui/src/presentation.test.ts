@@ -116,6 +116,14 @@ describe("describe", () => {
       outputInline: { passed: true, findings: [] },
     })
     expect(verdict.summary).toBe("result produced")
+
+    // A finalize result carries a commit string, but RunFinalized's own row already renders it.
+    const finalized = describeEvent({
+      _tag: "ResultProduced",
+      outputInline: { commit: "abc1234", commits: 1 },
+    })
+    expect(finalized.summary).toBe("result produced")
+
     expect(describeEvent({ _tag: "ResultProduced", outputRef: "art_1" }).summary).toBe(
       "result produced",
     )

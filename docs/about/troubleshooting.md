@@ -113,7 +113,7 @@ block and warns that any later block requiring its output will now fail its inpu
 ```
 ValidationError: analyzer-template — the Analyzer produced no usable decision: …
 ValidationError: analyzer-template — the Analyzer chose template "x", which does not exist;
-                 known templates: task, quickfix, guarded-fix
+                 known templates: task, quickfix, guarded-fix, answer
 ValidationError: analyzer-decision — … and template "y" cannot fall back to its defaults: …
 ```
 
