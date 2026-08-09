@@ -153,7 +153,6 @@ const createRun = Effect.gen(function* () {
   return yield* ok({ runId }, 202)
 })
 
-/** Both verbs act on a run planning has parked, and on nothing else. */
 const waitingRun = (intent: "start" | "regenerate") =>
   Effect.gen(function* () {
     const store = yield* Store
@@ -238,8 +237,13 @@ const endRun = (intent: "cancel" | "stop") =>
         )
       }
     }
-    const ended = yield* supervisor[intent](runId)
-    return ended
+    const past = intent === "cancel" ? "cancelled" : "stopped"
+    const ended = yield* Effect.either(supervisor[intent](runId))
+    // A journal that refused the close says why; only "no one here holds this run" is unowned.
+    if (ended._tag === "Left") {
+      return yield* problem(409, `run cannot be ${past}`, ended.left.detail)
+    }
+    return ended.right
       ? yield* ok({ ok: true })
       : yield* problem(
           409,

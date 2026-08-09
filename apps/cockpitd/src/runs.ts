@@ -28,7 +28,19 @@ import {
   WorkspaceError,
   WorkspaceManager,
 } from "@cockpit/core"
-import { Cause, Context, Deferred, Effect, Fiber, HashMap, Layer, Option, Ref, Schema } from "effect"
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Equal,
+  Fiber,
+  HashMap,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+} from "effect"
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { readFile } from "node:fs/promises"
@@ -109,7 +121,7 @@ export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
      */
     readonly resume: (runId: RunId) => Effect.Effect<void, JournalError>
     /** False when this daemon process does not own the run — a recovered one never does. */
-    readonly cancel: (runId: RunId) => Effect.Effect<boolean>
+    readonly cancel: (runId: RunId) => Effect.Effect<boolean, JournalError>
     /** Like cancel, but the run closes as interrupted and stays resumable. */
     readonly stop: (runId: RunId) => Effect.Effect<boolean>
     /**
@@ -147,6 +159,12 @@ export const RunSupervisorLive = Layer.scoped(
     const retrospectives = yield* RetrospectiveService
 
     const running = yield* Ref.make(HashMap.empty<RunId, Fiber.RuntimeFiber<void>>())
+    /**
+     * One claim on a run at a time. Without it two entries race: `launch` overwrites whichever
+     * fiber the map already held for the run, orphaning it, and a regenerate that starts beside a
+     * Run writes a newer tree for a run that is already executing an older one.
+     */
+    const claim = yield* Effect.makeSemaphore(1)
     /**
      * Why an interrupted run is being unwound. Three cases, and the absent one is load-bearing:
      * no marker means the daemon itself is going down, so nobody closes the run — the row stays
@@ -309,11 +327,11 @@ export const RunSupervisorLive = Layer.scoped(
           tree: planned.tree,
           workspace,
           catalog: { blocks: registry.catalog.blocks, policies: planned.policies },
+          claimed: true,
           ...(input.reentry ? { resume: plan } : { skips: plan.skips }),
         })
       })
 
-    /** What an execution needs off the journal: the run, its project, and the tree it settled on. */
     const openable = (op: string, runId: RunId) =>
       Effect.gen(function* () {
         const fail = (detail: string) => new JournalError({ op, detail })
@@ -384,6 +402,19 @@ export const RunSupervisorLive = Layer.scoped(
         return true
       })
 
+    const raise = (runId: RunId, signature: string, cause: Cause.Cause<unknown>) =>
+      Effect.ignore(
+        journal.append({
+          runId,
+          payload: {
+            _tag: "ErrorRaised",
+            class: "technical",
+            signature,
+            message: clip(Cause.pretty(cause), causeChars),
+          },
+        }),
+      )
+
     const supervise = (runId: RunId, body: Effect.Effect<unknown, unknown>) =>
       Effect.matchCauseEffect(body, {
         onSuccess: () => Effect.void,
@@ -392,18 +423,54 @@ export const RunSupervisorLive = Layer.scoped(
             ? // External interrupts never reach this handler (they land in the onInterrupt
               // finalizer below); the guard only keeps an interrupt out of ErrorRaised.
               Effect.void
-            : journal
-                .append({
-                  runId,
-                  payload: {
-                    _tag: "ErrorRaised",
-                    class: "technical",
-                    signature: "run-pipeline",
-                    message: clip(Cause.pretty(cause), causeChars),
-                  },
-                })
-                .pipe(Effect.ignore, Effect.zipRight(closeFailed(runId))),
+            : Effect.zipRight(raise(runId, "run-pipeline", cause), closeFailed(runId)),
       })
+
+    /**
+     * Re-planning leaves the run where it stands. A failure here has executed nothing, so the run
+     * keeps waiting on the tree it already had rather than being walked through
+     * running → failed for an execution that never happened.
+     */
+    const replan = (input: {
+      readonly run: RunRow
+      readonly project: ProjectRow
+      readonly plan: ResumePlan
+    }) =>
+      Effect.gen(function* () {
+        // Both halves of a skip request go at once: the journal fold drops it at the new
+        // TreeAnalyzed, and this is the live half a running daemon would otherwise still hold.
+        yield* engine.forgetSkips(input.run.id)
+        const workspace = yield* reconcile(input.run, input.project, input.plan)
+        yield* planTree({
+          runId: input.run.id,
+          project: input.project,
+          prompt: input.run.prompt,
+          cwd: workspace.path,
+        })
+      }).pipe(
+        Effect.catchAllCause((cause) =>
+          Cause.isInterruptedOnly(cause)
+            ? Effect.failCause(cause)
+            : raise(input.run.id, "regenerate", cause),
+        ),
+      )
+
+    /**
+     * A finishing fiber gives the run up only while it is still the run's. A failed run keeps its
+     * fiber alive through the retrospective, and a Resume during that window puts a new one in the
+     * map — which this must not then remove, or cancel and stop would report a live run as unowned.
+     * The intent marker goes with it, or a stale "stop" would win over a later cancel.
+     */
+    const release = (runId: RunId) =>
+      Effect.flatMap(Effect.fiberId, (id) =>
+        Effect.flatMap(Ref.get(running), (held) => {
+          const mine = HashMap.get(held, runId)
+          if (Option.isNone(mine) || !Equal.equals(mine.value.id(), id)) return Effect.void
+          return Ref.update(running, HashMap.remove(runId)).pipe(
+            Effect.zipRight(Ref.update(closing, HashMap.remove(runId))),
+          )
+        }),
+      )
 
     /**
      * Registered before it runs, so a run that fails at once cannot be cleaned up before the map
@@ -425,22 +492,12 @@ export const RunSupervisorLive = Layer.scoped(
               // Interruption resumes past this, which is what keeps a cancelled run out of it.
               Effect.zipRight(retrospect(runId)),
             ),
-          ).pipe(
-            // The intent marker dies with the fiber, or a stale "stop" would win over a later
-            // cancel of a run reusing this id.
-            Effect.ensuring(
-              Ref.update(running, HashMap.remove(runId)).pipe(
-                Effect.zipRight(Ref.update(closing, HashMap.remove(runId))),
-              ),
-            ),
-            Effect.forkIn(scope),
-          )
+          ).pipe(Effect.ensuring(release(runId)), Effect.forkIn(scope))
           yield* Ref.update(running, HashMap.set(runId, fiber))
           yield* Deferred.succeed(registered, undefined)
         }),
       )
 
-    /** A body this daemon is already running for the run: planning, regenerating or executing. */
     const inFlight = (runId: RunId) => Effect.map(Ref.get(running), HashMap.has(runId))
 
     return {
@@ -481,51 +538,46 @@ export const RunSupervisorLive = Layer.scoped(
         }),
 
       start: (runId) =>
-        Effect.gen(function* () {
-          const opened = yield* openable("start", runId)
-          if (yield* inFlight(runId)) {
-            return yield* new JournalError({
-              op: "start",
-              detail: `run ${runId} is still assembling its workflow — wait for the new tree`,
-            })
-          }
-          // The status change is the claim on the run: a second Run of the same one finds it
-          // running and is refused here rather than forking a fiber against the same worktree.
-          yield* journal.startRun(runId)
-          yield* launch(runId, enter({ ...opened, reentry: false }))
-        }),
+        claim.withPermits(1)(
+          Effect.gen(function* () {
+            if (yield* inFlight(runId)) {
+              return yield* new JournalError({
+                op: "start",
+                detail: `run ${runId} is still assembling its workflow — wait for the new tree`,
+              })
+            }
+            const opened = yield* openable("start", runId)
+            // The status change is the claim on the run: a second Run of the same one finds it
+            // running and is refused here rather than forking a fiber against the same worktree.
+            yield* journal.startRun(runId)
+            yield* launch(runId, enter({ ...opened, reentry: false }))
+          }),
+        ),
 
       regenerate: (runId) =>
-        Effect.gen(function* () {
-          const fail = (detail: string) => new JournalError({ op: "regenerate", detail })
-          const run = yield* store.run(runId)
-          if (run === undefined) return yield* fail(`unknown run ${runId}`)
-          const project = yield* store.project(run.projectId)
-          if (project === undefined) {
-            return yield* fail(`run ${runId} names unknown project ${run.projectId}`)
-          }
-          if (yield* inFlight(runId)) {
-            return yield* fail(`run ${runId} is already assembling a workflow`)
-          }
-          yield* launch(
-            runId,
-            planTree({
-              runId,
-              project,
-              prompt: run.prompt,
-              cwd: run.worktreePath ?? project.repoPath,
-            }),
-          )
-        }),
+        claim.withPermits(1)(
+          Effect.gen(function* () {
+            if (yield* inFlight(runId)) {
+              return yield* new JournalError({
+                op: "regenerate",
+                detail: `run ${runId} is already assembling a workflow`,
+              })
+            }
+            const { plan, project, run } = yield* openable("regenerate", runId)
+            yield* launch(runId, replan({ plan, project, run }))
+          }),
+        ),
 
       resume: (runId) =>
-        Effect.gen(function* () {
-          const opened = yield* openable("resume", runId)
-          // The status change is the claim on the run: a second resume of the same one finds it
-          // running and is refused here rather than forking a fiber against the same worktree.
-          yield* journal.resumeRun(runId)
-          yield* launch(runId, enter({ ...opened, reentry: true }))
-        }),
+        claim.withPermits(1)(
+          Effect.gen(function* () {
+            const opened = yield* openable("resume", runId)
+            // The status change is the claim on the run: a second resume of the same one finds it
+            // running and is refused here rather than forking a fiber against the same worktree.
+            yield* journal.resumeRun(runId)
+            yield* launch(runId, enter({ ...opened, reentry: true }))
+          }),
+        ),
 
       cancel: (runId) =>
         Effect.gen(function* () {
@@ -537,7 +589,7 @@ export const RunSupervisorLive = Layer.scoped(
           if (status !== "awaiting-start" && status !== "interrupted") return false
           yield* journal.cancelRun(runId)
           return true
-        }).pipe(Effect.orElseSucceed(() => false)),
+        }),
 
       stop: (runId) => interrupt(runId, "stop"),
 

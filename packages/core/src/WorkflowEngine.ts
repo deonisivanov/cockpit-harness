@@ -59,6 +59,12 @@ export interface RunRequest {
   readonly resume?: ResumePlan
   /** Skip requests recorded before this execution started; live ones arrive via requestSkip. */
   readonly skips?: ReadonlySet<string>
+  /**
+   * Set by a caller that has already moved the run into `running` — a start claims it out of
+   * `awaiting-start`, a resume re-opens it. Left unset the engine makes the transition itself,
+   * and that is what refuses a second execution of a run already under way.
+   */
+  readonly claimed?: boolean
 }
 
 export interface RunOutcome {
@@ -92,6 +98,8 @@ export class WorkflowEngine extends Context.Tag("cockpit/WorkflowEngine")<
     ) => Effect.Effect<void, JournalError>
     /** Records that the node's next visit is to be skipped; consumed at that visit. */
     readonly requestSkip: (runId: RunId, nodeId: BlockId) => Effect.Effect<void>
+    /** Drops the run's outstanding requests: they named nodes of a tree that is being replaced. */
+    readonly forgetSkips: (runId: RunId) => Effect.Effect<void>
   }
 >() {}
 
@@ -263,6 +271,8 @@ export const WorkflowEngineLive = Layer.effect(
     // node in a later run.
     const skips = yield* Ref.make(HashSet.empty<string>())
     const pendingKey = (runId: RunId, blockId: BlockId) => `${runId}:${blockId}`
+    const dropSkips = (runId: RunId) =>
+      Ref.update(skips, HashSet.filter((key) => !key.startsWith(`${runId}:`)))
 
     /**
      * Parks the attempt on the answer the way a gate parks on a decision (plan §10). Nothing is
@@ -351,9 +361,10 @@ export const WorkflowEngineLive = Layer.effect(
         if (invalid !== undefined) return yield* Effect.fail(invalid)
 
         const plan = request.resume
-        // The caller may already own the transition: a resume re-opens the run while reconciling
-        // its worktree, and a start claims it out of `awaiting-start` before forking this fiber.
-        if ((yield* journal.runStatus(runId)) !== "running") yield* journal.startRun(runId)
+        // A re-entry arrives on a run that is open by definition; anything else claims the run
+        // here unless the caller says it already has, and that claim is what refuses a second
+        // execution of the same run.
+        if (plan === undefined && !request.claimed) yield* journal.startRun(runId)
 
         yield* Ref.update(skips, (set) =>
           [...(request.skips ?? []), ...(plan?.skips ?? [])].reduce(
@@ -1437,11 +1448,7 @@ export const WorkflowEngineLive = Layer.effect(
         yield* journal.finishRun(runId, status)
         const final = yield* Ref.get(state)
         return { status, outputs: final.outputs } satisfies RunOutcome
-      }).pipe(
-        Effect.ensuring(
-          Ref.update(skips, HashSet.filter((key) => !key.startsWith(`${request.runId}:`))),
-        ),
-      )
+      }).pipe(Effect.ensuring(dropSkips(request.runId)))
 
     return {
       run,
@@ -1469,6 +1476,8 @@ export const WorkflowEngineLive = Layer.effect(
 
       requestSkip: (runId, nodeId) =>
         Ref.update(skips, HashSet.add(pendingKey(runId, nodeId))),
+
+      forgetSkips: dropSkips,
     }
   }),
 )

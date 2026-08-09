@@ -1,5 +1,6 @@
 import { correctivePolicy, JournalEvent, ProjectRow, RunRow, WorkflowTree } from "@cockpit/core"
 import { Effect, Schedule } from "effect"
+import { existsSync, rmSync } from "node:fs"
 import { expect, it } from "vitest"
 import {
   Api,
@@ -380,6 +381,173 @@ it(
 )
 
 it(
+  "lets one verb at a time claim a waiting run, and refuses the others while it assembles",
+  async () => {
+    writeScript({
+      "analyzer:1": chooses("quickfix"),
+      "analyzer:2": { ...chooses("quickfix"), delayMs: 2500 },
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, waiting)
+
+        // All three land while the second analysis is still thinking.
+        const regenerated = yield* client.post(`/api/runs/${runId}/regenerate`)
+        const again = yield* client.post(`/api/runs/${runId}/regenerate`)
+        const early = yield* client.post(`/api/runs/${runId}/start`)
+
+        yield* waitFor(runId, (found) => trees(found) > 1)
+        const started = yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return {
+          again,
+          early,
+          regenerated,
+          started,
+          run: yield* detailOf(client, runId),
+          found: yield* events(runId),
+        }
+      }),
+    )
+
+    expect(result.regenerated.status).toBe(202)
+    expect(result.again.status).toBe(409)
+    expect(json<{ detail: string }>(result.again).detail).toContain("already assembling")
+    expect(result.early.status).toBe(409)
+    expect(json<{ detail: string }>(result.early).detail).toContain("still assembling")
+    // Exactly one planning fiber ran, and the tree it wrote is the one the run then executed
+    // under a fiber of its own — a lost or overwritten fiber shows up as a run that never ends.
+    expect(trees(result.found)).toBe(2)
+    expect(result.started.status).toBe(202)
+    expect(tagged(result.found, "RunStarted")).toHaveLength(1)
+    expect(result.run.run.status).toBe("succeeded")
+  },
+  2 * minutes,
+)
+
+it(
+  "leaves a run waiting on its old workflow when re-planning fails",
+  async () => {
+    writeScript({
+      "analyzer:1": chooses("quickfix"),
+      analyzer: chooses("no-such-template"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, waiting)
+
+        const regenerated = yield* client.post(`/api/runs/${runId}/regenerate`)
+        yield* waitFor(runId, (found) =>
+          tagged(found, "ErrorRaised").some(
+            (event) => (event.payload as { signature: string }).signature === "regenerate",
+          ),
+        )
+        const parked = yield* detailOf(client, runId)
+        const failed = yield* events(runId)
+
+        // Still the run it was: the workflow it kept is one Run can still execute.
+        yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return { failed, parked, regenerated, run: yield* detailOf(client, runId) }
+      }),
+    )
+
+    expect(result.regenerated.status).toBe(202)
+    expect(result.parked.run.status).toBe("awaiting-start")
+    expect(result.parked.tree?.templateId).toBe("quickfix")
+    expect(trees(result.failed)).toBe(1)
+    // Nothing executed, so nothing may narrate an execution that started and then failed.
+    expect(tagged(result.failed, "RunStarted")).toHaveLength(0)
+    expect(tagged(result.failed, "RunFinished")).toHaveLength(0)
+    expect(result.run.run.status).toBe("succeeded")
+  },
+  2 * minutes,
+)
+
+it(
+  "re-plans a waiting run whose worktree was deleted, rebuilding it first",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, waiting)
+
+        const worktree = (yield* detailOf(client, runId)).run.worktreePath as string
+        yield* Effect.sync(() => rmSync(worktree, { recursive: true, force: true }))
+
+        const regenerated = yield* client.post(`/api/runs/${runId}/regenerate`)
+        yield* waitFor(runId, (found) => trees(found) > 1)
+        yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return { regenerated, rebuilt: existsSync(worktree), run: yield* detailOf(client, runId) }
+      }),
+    )
+
+    expect(result.regenerated.status).toBe(202)
+    // Re-planning takes the same route Run does, so the analyzer never runs in a missing directory.
+    expect(result.rebuilt).toBe(true)
+    expect(result.run.run.status).toBe("succeeded")
+  },
+  2 * minutes,
+)
+
+it(
+  "drops a skip requested against a workflow a regenerate has replaced",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, waiting)
+
+        const accepted = yield* client.post(`/api/runs/${runId}/blocks/verify/skip`)
+        yield* client.post(`/api/runs/${runId}/regenerate`)
+        yield* waitFor(runId, (found) => trees(found) > 1)
+        yield* client.post(`/api/runs/${runId}/start`)
+        yield* waitFor(runId, finished)
+        return { accepted, found: yield* events(runId) }
+      }),
+    )
+
+    expect(result.accepted.status).toBe(202)
+    // The request named a node of the tree the regenerate replaced; the new `verify` runs.
+    expect(tagged(result.found, "BlockSkipped")).toHaveLength(0)
+    expect(tagged(result.found, "BlockStarted").map((event) => event.blockId)).toEqual([
+      "implement",
+      "verify",
+    ])
+  },
+  2 * minutes,
+)
+
+it(
   "cancels a run that is waiting to start, and one no fiber is holding any more",
   async () => {
     writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })
@@ -538,11 +706,7 @@ it(
     const result = await withApi((client) =>
       Effect.gen(function* () {
         const project = yield* register(client, repoPath)
-        // Not the harness helper: this one must act while the analyzer is still thinking.
-        const { runId } = yield* Effect.map(
-          client.post("/api/runs", { projectId: project.id, prompt: "small fix" }),
-          json<{ readonly runId: string }>,
-        )
+        const { runId } = yield* plan(client, project.id, "small fix")
         const stopped = yield* client.post(`/api/runs/${runId}/stop`)
         const started = yield* client.post(`/api/runs/${runId}/start`)
         const cancelled = yield* client.post(`/api/runs/${runId}/cancel`)

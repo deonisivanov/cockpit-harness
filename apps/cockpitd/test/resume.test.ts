@@ -104,6 +104,33 @@ it(
 )
 
 it(
+  "keeps a resumed run under this daemon while the failed one is still writing its retrospective",
+  async () => {
+    // The run fails, its fiber lives on through the retrospective, and the resume lands inside
+    // that window — the moment a user actually presses Resume.
+    writeScript({ ...stubborn, "agent-task:4": { hang: true } })
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const { runId } = yield* failedRun(client, "handle empty input")
+        const resumed = yield* client.post(`/api/runs/${runId}/resume`)
+        yield* waitFor(runId, (found) =>
+          tagged(found, "BlockStarted").some((event) => event.blockId === "implement#4"),
+        )
+        const stopped = yield* client.post(`/api/runs/${runId}/stop`)
+        return { resumed, stopped, run: yield* runRow(client, runId) }
+      }),
+    )
+
+    expect(result.resumed.status).toBe(202)
+    // 409 here means the closing fiber took the resumed run's place in the map with it.
+    expect(result.stopped.status).toBe(200)
+    expect(result.run.status).toBe("interrupted")
+  },
+  3 * minutes,
+)
+
+it(
   "rebuilds a worktree that is gone and still lands the run on its target branch",
   async () => {
     // `task`, not `quickfix`: it ends in finalize, which is what a restored worktree used to

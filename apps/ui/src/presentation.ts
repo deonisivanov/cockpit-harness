@@ -5,8 +5,15 @@ import type { AttemptState, RunState } from "./store.js"
 export const resumable = (status: RunStatus): boolean =>
   status === "interrupted" || status === "failed"
 
-/** A planned run executes on a human decision, and only there can it be replanned. */
 export const startable = (status: RunStatus): boolean => status === "awaiting-start"
+
+/**
+ * How many trees the run has settled on. The artifact is what `GET /api/runs/:id` reads back, and
+ * it is written after the transforms — `TreeAnalyzed` only says the analyzer chose one.
+ */
+export const treeRevisions = (events: readonly JournalEvent[]): number =>
+  events.filter((e) => e.payload._tag === "ArtifactCreated" && e.payload.kind === "workflow-tree")
+    .length
 
 export const RUN_TITLE = "Executes this workflow; nothing has run so far"
 
@@ -22,6 +29,9 @@ export const TERMINAL_TITLE =
 /** Plan §10: the button stays available during execution, and the risk is on screen, not in a tooltip. */
 export const TERMINAL_WRITE_WARNING =
   "This run is still executing — a block may hold write access to this worktree, so read at your own risk."
+
+export const TERMINAL_WAITING_WARNING =
+  "This run has not started — anything written in this worktree now is left for it to find, and a dirty worktree is refused when you press Run."
 
 /** One line for the handoff: which terminal took it, which session, and what had to be rebuilt. */
 export const terminalNote = (handoff: TerminalHandoff): string =>

@@ -260,6 +260,15 @@ class Builder {
 
 const PROMPT = "Fix interview recovery after reconnect"
 
+/** What the daemon writes once the transforms settle; the client refetches its tree on it. */
+const treeWritten: EventPayload = {
+  _tag: "ArtifactCreated",
+  artifactId: "art_tree",
+  kind: "workflow-tree",
+  path: "~/.cockpit/runs/run_7f2a91/tree.json",
+  bytes: 1_284,
+}
+
 /** The prototype's shared prelude: session, analysis, explore, reproduce, plan, checkpoint. */
 function prelude(b: Builder): void {
   b.push({ _tag: "RunCreated", projectId: PROJECT, prompt: PROMPT })
@@ -452,6 +461,7 @@ function fixture(state: MockState): Fixture {
       decision: { template: "bugfix-with-reproduction" },
       fallback: false,
     })
+    b.push(treeWritten)
     b.push({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore")
     b.push({ _tag: "AttemptStarted", number: 1, sessionId: "sess_7f2a91c4" }, "explore", "at_ex1")
     // Only RunCreated is backfilled; RunStarted streams in, flipping the run to `running`.
@@ -469,6 +479,7 @@ function fixture(state: MockState): Fixture {
       fallback: false,
     })
     b.push({ _tag: "TreeValidated", errors: [] })
+    b.push(treeWritten)
     b.push({ _tag: "RunAwaitingStart" })
     return { events: b.events, status: "awaiting-start", streamFrom: b.events.length }
   }
@@ -643,6 +654,7 @@ export function mockSource(state: MockState): Source {
         decision: { template: "quickfix" },
         fallback: false,
       })
+      emit(treeWritten)
     },
     artifact: async (id) => {
       const a = ARTIFACTS[id]

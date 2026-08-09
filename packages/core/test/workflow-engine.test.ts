@@ -206,6 +206,22 @@ it("leaves an interrupted run open: the caller owns the close", async () => {
   expect(of(events, "RunFinished")).toHaveLength(0)
 }, 30_000)
 
+it("refuses a second execution of a run already under way", async () => {
+  const { events, refusal } = await withEngine({ "agent-task": { hang: true } }, ({ runId, start }) =>
+    Effect.gen(function* () {
+      const running = yield* Effect.fork(start(implementThenVerify))
+      yield* waitFor(runId, (seen) => of(seen, "PromptComposed").length > 0)
+      // The claim is the journal's, so an unclaimed second entry has to collide with it.
+      const refusal = yield* Effect.flip(start(implementThenVerify))
+      yield* Fiber.interrupt(running)
+      return { refusal, events: yield* readEvents(runId) }
+    }),
+  )
+
+  expect(refusal).toMatchObject({ _tag: "JournalError", op: "startRun" })
+  expect(of(events, "RunStarted")).toHaveLength(1)
+}, 30_000)
+
 it("fails a block whose required artifact never appeared", async () => {
   const { events, outcome } = await withEngine(
     { "agent-task": summary("said it wrote the report") },

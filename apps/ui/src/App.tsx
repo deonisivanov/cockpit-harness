@@ -13,8 +13,10 @@ import {
   RUN_TITLE,
   startable,
   TERMINAL_TITLE,
+  TERMINAL_WAITING_WARNING,
   TERMINAL_WRITE_WARNING,
   terminalNote,
+  treeRevisions,
 } from "./presentation.js"
 import { Rail } from "./Rail.js"
 import { Stream } from "./Stream.js"
@@ -110,20 +112,15 @@ export default function App() {
     }
   }, [source, runId])
 
-  // The tree artifact is written as the analyzer settles, which is what TreeAnalyzed narrates —
-  // a truer signal than the run's status, and it also catches the tree a Regenerate replaced.
-  const analyses = useMemo(
-    () => state.events.filter((e) => e.payload._tag === "TreeAnalyzed").length,
-    [state.events],
-  )
+  const trees = useMemo(() => treeRevisions(state.events), [state.events])
   useEffect(() => {
-    if (!runId || analyses === 0) return
+    if (!runId || trees === 0) return
     let live = true
     void source.run(runId).then((d) => live && setDetail(d))
     return () => {
       live = false
     }
-  }, [source, runId, analyses])
+  }, [source, runId, trees])
 
   const isLive = state.runStatus === "running" || state.runStatus === "created"
   const waitingToStart = startable(state.runStatus)
@@ -197,13 +194,21 @@ export default function App() {
     void act("run", () => source.stop(runId))
   }, [act, source, runId])
 
-  const runNow = useCallback(() => {
-    if (!runId) return
-    void act("run", async () => {
-      await source.start(runId)
-      if (project) setRuns(await source.runs(project.id))
-    })
-  }, [act, source, runId, project])
+  // Both put the run back under the engine, and the rail's status for it changes with that.
+  const enterRun = useCallback(
+    (go: (id: string) => Promise<unknown>) => {
+      if (!runId) return
+      void act("run", async () => {
+        await go(runId)
+        if (project) setRuns(await source.runs(project.id))
+      })
+    },
+    [act, source, runId, project],
+  )
+
+  const runNow = useCallback(() => enterRun((id) => source.start(id)), [enterRun, source])
+
+  const resume = useCallback(() => enterRun((id) => source.resume(id)), [enterRun, source])
 
   const regenerate = useCallback(() => {
     if (!runId) return
@@ -217,14 +222,6 @@ export default function App() {
     },
     [act, source, runId],
   )
-
-  const resume = useCallback(() => {
-    if (!runId) return
-    void act("run", async () => {
-      await source.resume(runId)
-      if (project) setRuns(await source.runs(project.id))
-    })
-  }, [act, source, runId, project])
 
   const openTerminal = useCallback(() => {
     if (!runId) return
@@ -467,12 +464,12 @@ export default function App() {
                   Open session in terminal ↗
                 </button>
               </div>
-              {isLive && (
+              {(isLive || waitingToStart) && (
                 <div
                   data-testid="terminal-write-warning"
                   className="mt-2 font-sans text-[11.5px] text-amber"
                 >
-                  {TERMINAL_WRITE_WARNING}
+                  {waitingToStart ? TERMINAL_WAITING_WARNING : TERMINAL_WRITE_WARNING}
                 </div>
               )}
               {error?.scope === "terminal" ? (

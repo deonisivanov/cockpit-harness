@@ -95,7 +95,7 @@ interrupted runs are closed straight through the journal. Any other failure beco
 | `POST /api/runs/:id/stop` | Close as `interrupted` (resumable); 409 while planning, waiting, or not owned |
 | `POST /api/runs/:id/blocks/:blockId/skip` | Record a skip for the node's next visit; 409 when it would starve a later block |
 | `POST /api/runs/:id/terminal` | Open or resume the canonical session; 502 on a terminal failure |
-| `POST /api/runs/:id/retrospective` | 409 while the run is `created` or `running` |
+| `POST /api/runs/:id/retrospective` | 409 while the run is `created`, `awaiting-start` or `running` |
 | `POST /api/runs/:id/resume` | Re-enter; `202 {runId}`, 409 unless `interrupted` or `failed`, 404 unknown |
 | `GET /api/insights` | `?target=core\|cartridge&limit&offset` |
 | `GET /api/insights/:id` | One insight |

@@ -42,8 +42,9 @@ test("a planned run shows its workflow and waits for Run", async ({ page }) => {
   await expect(page.getByTestId("run-workflow")).toBeVisible()
   await expect(page.getByTestId("regenerate-workflow")).toBeVisible()
   await expect(page.getByTestId("cancel-run")).toBeVisible()
-  // Nothing is executing, so there is nothing to stop.
   await expect(page.getByTestId("stop-run")).toHaveCount(0)
+  // The terminal stays open on a run that has not started, so the risk of writing is on screen.
+  await expect(page.getByTestId("terminal-write-warning")).toContainText("has not started")
 
   await page.getByTestId("run-workflow").click()
   await expect(page.getByTestId("stop-run")).toBeVisible()

@@ -9,6 +9,7 @@ import {
   resumable,
   startable,
   terminalNote,
+  treeRevisions,
 } from "./presentation.js"
 import { applyEvents, emptyRunState } from "./store.js"
 
@@ -43,6 +44,24 @@ describe("resumable", () => {
 describe("startable", () => {
   it("offers Run and Regenerate only while the run waits for a decision", () => {
     expect(statuses.filter(startable)).toEqual(["awaiting-start"])
+  })
+})
+
+describe("treeRevisions", () => {
+  const analyzed = ev({
+    _tag: "TreeAnalyzed",
+    templateId: "quickfix",
+    rationale: "fixture",
+    decision: {},
+    fallback: false,
+  })
+  const wrote = (kind: string) =>
+    ev({ _tag: "ArtifactCreated", artifactId: `art_${++seq}`, kind, path: "/tmp/x", bytes: 1 })
+
+  it("counts the trees the run settled on, not the ones an analyzer chose", () => {
+    expect(treeRevisions([analyzed])).toBe(0)
+    expect(treeRevisions([analyzed, wrote("transcript"), wrote("workflow-tree")])).toBe(1)
+    expect(treeRevisions([wrote("workflow-tree"), analyzed, wrote("workflow-tree")])).toBe(2)
   })
 })
 

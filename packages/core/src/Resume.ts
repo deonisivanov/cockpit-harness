@@ -58,7 +58,10 @@ export const recordedSkips = (events: ReadonlyArray<JournalEvent>): ReadonlySet<
   const pending = new Set<string>()
   for (const event of events) {
     const payload = event.payload
-    if (payload._tag === "BlockSkipRequested") pending.add(payload.nodeId)
+    // A request names a node of the tree that was current when it was made. Re-planning replaces
+    // that tree, so a same-named node in the new one is a decision the user has not taken.
+    if (payload._tag === "TreeAnalyzed") pending.clear()
+    else if (payload._tag === "BlockSkipRequested") pending.add(payload.nodeId)
     else if (payload._tag === "BlockSkipped" && event.blockId !== undefined) {
       pending.delete(nodeOf(event.blockId))
     }
