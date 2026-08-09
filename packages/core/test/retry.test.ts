@@ -20,7 +20,7 @@ import {
   verifyOutput,
   WorkflowEngine,
 } from "../src/index.js"
-import { block, catalog, id, of, waitFor, withEngine } from "./engine-harness.js"
+import { block, catalog, id, of, startedIds, waitFor, withEngine } from "./engine-harness.js"
 import { EngineContext, engineLayer, readEvents, tempHome } from "./helpers.js"
 
 const summary = (text: string) => ({ output: { summary: text } })
@@ -416,7 +416,7 @@ it("hangs loop events on the block instance that actually ran", async () => {
     "implement",
     "implement#2",
   ])
-  const opened = new Set(of(events, "BlockStarted").map((event) => event.blockId))
+  const opened = new Set(startedIds(events))
   expect(
     events.filter((event) => event.blockId !== undefined && !opened.has(event.blockId)),
   ).toEqual([])

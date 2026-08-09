@@ -49,10 +49,10 @@ const terminal = new Set<BlockStatus>(["succeeded", "failed", "skipped"])
 
 /**
  * Node ids with an outstanding skip request. A request is consumed only by the BlockSkipped that
- * honours it — not by a visit that ran or replayed the node — because that is the one event the
- * live path also produces when it consumes its Ref entry. Any broader rule lets a fold taken
- * mid-race disagree with the Ref, and then a skip is honoured on a fresh start but not on a
- * resume, or the reverse, silently.
+ * carries `requested` — not by a visit that ran or replayed the node, and not by a skip the engine
+ * or a plugin decided on its own — because that is the one event the live path also produces when
+ * it consumes its Ref entry. Any broader rule lets a fold taken mid-race disagree with the Ref, and
+ * then a skip is honoured on a fresh start but not on a resume, or the reverse, silently.
  */
 export const recordedSkips = (events: ReadonlyArray<JournalEvent>): ReadonlySet<string> => {
   const pending = new Set<string>()
@@ -62,7 +62,11 @@ export const recordedSkips = (events: ReadonlyArray<JournalEvent>): ReadonlySet<
     // that tree, so a same-named node in the new one is a decision the user has not taken.
     if (payload._tag === "TreeAnalyzed") pending.clear()
     else if (payload._tag === "BlockSkipRequested") pending.add(payload.nodeId)
-    else if (payload._tag === "BlockSkipped" && event.blockId !== undefined) {
+    else if (
+      payload._tag === "BlockSkipped" &&
+      payload.requested === true &&
+      event.blockId !== undefined
+    ) {
       pending.delete(nodeOf(event.blockId))
     }
   }

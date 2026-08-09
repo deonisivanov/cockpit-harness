@@ -61,6 +61,10 @@ export const of = <T extends EventPayload["_tag"]>(
 ): ReadonlyArray<Tagged<T>> =>
   events.filter((event): event is Tagged<T> => event.payload._tag === tag)
 
+/** Which blocks actually opened, in order: what a skip, a replay or a branch is read against. */
+export const startedIds = (events: ReadonlyArray<JournalEvent>) =>
+  of(events, "BlockStarted").map((event) => event.blockId)
+
 /** Polls the journal instead of the clock, so a slow machine waits rather than flakes. */
 export const waitFor = (runId: RunId, ready: (events: ReadonlyArray<JournalEvent>) => boolean) =>
   Effect.retry(

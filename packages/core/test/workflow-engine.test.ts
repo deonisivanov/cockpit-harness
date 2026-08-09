@@ -7,14 +7,13 @@ import {
   BlockId,
   CheckpointService,
   correctivePolicy,
-  JournalEvent,
   RunId,
   runCommand,
   verifyOutput,
   WorkflowEngine,
   WorkflowNode,
 } from "../src/index.js"
-import { block, catalog, id, of, waitFor, withEngine } from "./engine-harness.js"
+import { block, catalog, id, of, startedIds, waitFor, withEngine } from "./engine-harness.js"
 import { readEvents, tempDir } from "./helpers.js"
 
 const summary = (text: string) => ({ output: { summary: text } })
@@ -49,7 +48,7 @@ it("runs a sequence in order and hands each output to the next block", async () 
     implement: { summary: "edited the parser" },
     verify: { passed: true },
   })
-  expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual(["implement", "verify"])
+  expect(startedIds(events)).toEqual(["implement", "verify"])
   expect(of(events, "PromptComposed").at(1)?.blockId).toBe("verify")
 }, 30_000)
 
@@ -185,7 +184,7 @@ it.each([
 
     expect(outcome.status).toBe(status)
     expect(of(events, "ApprovalDecided")[0].payload).toMatchObject({ approved, note: "reviewed" })
-    expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual(blocks)
+    expect(startedIds(events)).toEqual(blocks)
   },
   30_000,
 )
@@ -371,7 +370,7 @@ it("fails an attempt whose required input was never produced, with a verdict", a
   expect(of(events, "AttemptFinished").map((event) => event.payload.verdict)).toContain(
     "semantic-failure",
   )
-  expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual([
+  expect(startedIds(events)).toEqual([
     "check",
     "other",
     "review",
@@ -539,8 +538,10 @@ it("fails a starved single-attempt block as a run failure with a verdict, not an
   expect(of(result.events, "AttemptFinished")[0].payload.verdict).toBe("semantic-failure")
 }, 30_000)
 
-const gate = { ...runCommand, id: "gate", skipWhenUnchanged: true }
-const gateNode = block("gate", gate.id, { overrides: { command: { argv: ["true"] } } })
+const qualityGate = { ...runCommand, id: "gate", skipWhenUnchanged: true }
+const qualityGateNode = block("gate", qualityGate.id, {
+  overrides: { command: { argv: ["true"] } },
+})
 
 /** The owner's question shape: reads the repository, answers into $COCKPIT_OUTPUT, writes nothing. */
 const answerOnly = {
@@ -551,31 +552,34 @@ const answerOnly = {
   successCriteria: [],
 }
 
-const gates = catalog([gate, answerOnly])
+const qualityGates = catalog([qualityGate, answerOnly])
 const unchanged = "no files changed since the run's base commit"
 
-const startedIds = (events: ReadonlyArray<JournalEvent>) =>
-  of(events, "BlockStarted").map((event) => event.blockId)
-
-it("skips a skipWhenUnchanged gate on a run that changed nothing", async () => {
+// A writing block that wrote nothing still earns an empty checkpoint, so the run's branch is a
+// commit ahead of its base with no file to show for it: what the diff answers, not the log.
+it("skips a skipWhenUnchanged gate after a write block that changed nothing", async () => {
   const result = await withEngine(
     { "agent-task": summary("looked around and changed nothing") },
     ({ runId, start }) =>
       Effect.gen(function* () {
         const outcome = yield* start(
-          { _tag: "Sequence", children: [block("implement", agentTask.id), gateNode] },
-          gates,
+          { _tag: "Sequence", children: [block("implement", agentTask.id), qualityGateNode] },
+          qualityGates,
         )
         return { outcome, events: yield* readEvents(runId) }
       }),
   )
 
   expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "CheckpointCreated").length).toBeGreaterThan(0)
   expect(of(result.events, "BlockSkipped")[0].payload.reason).toBe(unchanged)
   expect(startedIds(result.events)).not.toContain("gate")
 }, 30_000)
 
-it("runs a skipWhenUnchanged gate once a block before it has written a file", async () => {
+// The regression that fails if the `since` argument is ever dropped: the checkpoint after
+// `implement` committed the file it wrote, which is exactly the state `git status --porcelain`
+// reports as clean while the run has plainly done work.
+it("runs a skipWhenUnchanged gate on work an earlier checkpoint already committed", async () => {
   const events = await withEngine(
     {
       "agent-task": {
@@ -586,13 +590,14 @@ it("runs a skipWhenUnchanged gate once a block before it has written a file", as
     ({ runId, start }) =>
       Effect.gen(function* () {
         yield* start(
-          { _tag: "Sequence", children: [block("implement", agentTask.id), gateNode] },
-          gates,
+          { _tag: "Sequence", children: [block("implement", agentTask.id), qualityGateNode] },
+          qualityGates,
         )
         return yield* readEvents(runId)
       }),
   )
 
+  expect(of(events, "CheckpointCreated").length).toBeGreaterThan(0)
   expect(of(events, "BlockSkipped")).toHaveLength(0)
   expect(startedIds(events)).toContain("gate")
 }, 30_000)
@@ -617,32 +622,30 @@ it("runs a gate with no flag on a run that changed nothing", async () => {
   expect(startedIds(events)).toContain("cmd")
 }, 30_000)
 
-// The regression that fails if the `since` argument is ever dropped: `implement` changed a file,
-// the checkpoint after it committed that change, and `answer` changed nothing — which is exactly
-// the state `git status --porcelain` reports as clean while the run has plainly done work.
-it("runs the gate on work an earlier checkpoint already committed", async () => {
+// A re-entry hands the engine the literal "HEAD" for a run whose base commit was never recorded.
+// Diffed against the worktree's own HEAD nothing has ever changed, so the flag must not answer
+// from it: that is porcelain by another name, and it would skip every gate for the rest of the run.
+it("runs a skipWhenUnchanged gate when the run recorded no base commit", async () => {
   const events = await withEngine(
-    {
-      "agent-task": {
-        ...summary("wrote the feature"),
-        writes: { "feature.ts": "export const x = 1\n" },
-      },
-      answer: summary("nothing more to do"),
-    },
-    ({ runId, start }) =>
+    { answer: summary("this project is a harness") },
+    (harness) =>
       Effect.gen(function* () {
-        yield* start(
-          {
-            _tag: "Sequence",
-            children: [block("implement", agentTask.id), block("answer", answerOnly.id), gateNode],
-          },
-          gates,
-        )
-        return yield* readEvents(runId)
+        const engine = yield* WorkflowEngine
+        const root: WorkflowNode = {
+          _tag: "Sequence",
+          children: [block("answer", answerOnly.id), qualityGateNode],
+        }
+        yield* engine.run({
+          runId: harness.runId,
+          task: { prompt: "make the thing work", projectId: "proj" },
+          tree: { runId: harness.runId, templateId: "test", root },
+          workspace: { ...harness.workspace, baseCommit: "HEAD" },
+          catalog: qualityGates,
+        })
+        return yield* readEvents(harness.runId)
       }),
   )
 
-  expect(of(events, "CheckpointCreated").length).toBeGreaterThan(0)
   expect(of(events, "BlockSkipped")).toHaveLength(0)
   expect(startedIds(events)).toContain("gate")
 }, 30_000)
@@ -653,8 +656,8 @@ it("skips the gate after an agent block that wrote only $COCKPIT_OUTPUT", async 
   const result = await withEngine({ answer: summary("this project is a harness") }, (harness) =>
     Effect.gen(function* () {
       const outcome = yield* harness.start(
-        { _tag: "Sequence", children: [block("answer", answerOnly.id), gateNode] },
-        gates,
+        { _tag: "Sequence", children: [block("answer", answerOnly.id), qualityGateNode] },
+        qualityGates,
       )
       const checkpoints = yield* CheckpointService
       return {

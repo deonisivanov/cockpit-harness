@@ -92,9 +92,11 @@ interface BlockDef<I, O> {
   command?: { argv: string[]; env?: Record<string, string>; successRules?: OutputRule[] }  // command blocks
   skipWhenUnchanged?: boolean                // opt-in: the engine skips the block (BlockSkipped, reason
                                              // "no files changed since the run's base commit") when the
-                                             // worktree holds nothing the run's base commit did not.
-                                             // For gates that police changes; validation refuses the flag
-                                             // on a block a downstream required input depends on.
+                                             // worktree holds nothing the run's base commit did not, and
+                                             // never when the run recorded no base commit. For gates that
+                                             // police changes; validation refuses the flag on a block a
+                                             // downstream required input depends on, on a Condition's
+                                             // predicate source, and on a Loop's verdict source.
   finalizeMode?: "squash" | "ordered"         // workspace blocks; default "squash"
   sessionPolicy: "fresh" | "continue"        // default "fresh" (ADR-004)
   retryPolicy: RetryPolicyRef

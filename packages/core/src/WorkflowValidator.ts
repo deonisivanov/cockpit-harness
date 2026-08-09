@@ -301,6 +301,21 @@ const walk = (
 
         const body = blocksIn(node.body)
         const inBody = new Set(body.map((block) => block.id))
+
+        // Whose verdict ends an iteration, read exactly as the engine reads it. A skip reports
+        // success, so a closing block that may skip itself lets the loop exit having judged nothing.
+        const closingId = node.feedbackRoute?.from ?? body.at(-1)?.id
+        const closing = body.find((block) => block.id === closingId)
+        if (closing !== undefined && defs.get(closing.def)?.skipWhenUnchanged === true) {
+          errors.push(
+            fail(
+              "skip-when-unchanged",
+              [...path, closing.id],
+              `${closing.id} decides whether the loop exits, so it cannot be skipped when nothing changed`,
+            ),
+          )
+        }
+
         if (node.kind === "corrective") {
           if (node.feedbackRoute === undefined) {
             errors.push(
@@ -377,16 +392,15 @@ export const skipBreaksContract = (
 /**
  * The walk, plus the same legality check over every block the engine may skip on its own: a
  * `skipWhenUnchanged` flag that would starve a downstream block is refused where the tree is built
- * rather than discovered mid-run.
+ * rather than discovered mid-run. One block at a time is enough to cover a set of them skipping
+ * together: a suppressed node is refused by every downstream input list that names it, so two
+ * sources of one field are each refused on their own before the pair can starve anything.
  */
 export const validateWorkflow = (
   tree: WorkflowTree,
   catalog: WorkflowCatalog,
-  suppressed?: BlockId,
 ): ReadonlyArray<ValidationError> => {
-  const errors = walk(tree, catalog, suppressed)
-  if (suppressed !== undefined) return errors
-
+  const errors = walk(tree, catalog)
   const defs = new Map(catalog.blocks.map((def) => [def.id, def]))
   const flagged = blocksIn(tree.root).filter(
     (node) => defs.get(node.def)?.skipWhenUnchanged === true,

@@ -1075,6 +1075,29 @@ export const WorkflowEngineLive = Layer.effect(
 
             const blockId = yield* instanceId(node.id)
 
+            // Every way a visit can end without running the block. Clearing the record is the
+            // point they share: a skipped loop iteration must starve its dependents, not feed
+            // them the previous iteration's output.
+            const skipNode = (reason: string, requested = false) =>
+              Effect.gen(function* () {
+                yield* journal.skipBlock({
+                  runId,
+                  blockId,
+                  defId: def.id,
+                  kind: def.kind,
+                  reason,
+                  requested,
+                })
+                yield* Ref.update(state, (value) => {
+                  const outputs = { ...value.outputs }
+                  const outputRefs = { ...value.outputRefs }
+                  delete outputs[node.id]
+                  delete outputRefs[node.id]
+                  return { ...value, outputs, outputRefs }
+                })
+                return { verdict: "success" } satisfies AttemptOutcome
+              })
+
             // Mirrors the preflight Skip below; consumed here, so a loop's next iteration runs.
             const requested = yield* Ref.modify(skips, (set) => {
               const key = pendingKey(runId, node.id)
@@ -1082,40 +1105,16 @@ export const WorkflowEngineLive = Layer.effect(
                 ? ([true, HashSet.remove(set, key)] as const)
                 : ([false, set] as const)
             })
-            if (requested) {
-              yield* journal.skipBlock({
-                runId,
-                blockId,
-                defId: def.id,
-                kind: def.kind,
-                reason: "skipped by user request",
-              })
-              // A skipped loop iteration must starve its dependents, not feed them the previous
-              // iteration's output.
-              yield* Ref.update(state, (value) => {
-                const outputs = { ...value.outputs }
-                const outputRefs = { ...value.outputRefs }
-                delete outputs[node.id]
-                delete outputRefs[node.id]
-                return { ...value, outputs, outputRefs }
-              })
-              return { verdict: "success" } satisfies AttemptOutcome
-            }
+            if (requested) return yield* skipNode("skipped by user request", true)
 
             // `since` is not optional here: the engine checkpoints after every write block, so
             // porcelain status — the no-argument form — is clean at exactly this moment and would
-            // skip the gate on every run, changes or not.
-            if (def.skipWhenUnchanged === true) {
+            // skip the gate on every run, changes or not. A run that recorded no base commit is
+            // handed the literal "HEAD", which is porcelain by another name, so it runs the gate.
+            if (def.skipWhenUnchanged === true && workspace.baseCommit !== "HEAD") {
               const changed = yield* checkpoints.changedFiles(workspace, workspace.baseCommit)
               if (changed.length === 0) {
-                yield* journal.skipBlock({
-                  runId,
-                  blockId,
-                  defId: def.id,
-                  kind: def.kind,
-                  reason: "no files changed since the run's base commit",
-                })
-                return { verdict: "success" } satisfies AttemptOutcome
+                return yield* skipNode("no files changed since the run's base commit")
               }
             }
 
@@ -1124,16 +1123,7 @@ export const WorkflowEngineLive = Layer.effect(
             // Command blocks reach no provider and no plugin, so there is nothing to preflight.
             const resolution =
               def.kind === "agent" ? yield* resolveBinding(def, node.overrides) : undefined
-            if (resolution?._tag === "Skip") {
-              yield* journal.skipBlock({
-                runId,
-                blockId,
-                defId: def.id,
-                kind: def.kind,
-                reason: resolution.reason,
-              })
-              return { verdict: "success" } satisfies AttemptOutcome
-            }
+            if (resolution?._tag === "Skip") return yield* skipNode(resolution.reason)
 
             yield* journal.startBlock({ runId, blockId, defId: def.id, kind: def.kind })
             if (resolution !== undefined) {

@@ -68,7 +68,11 @@ export const LifecyclePayload = Schema.Union(
   Schema.TaggedStruct("BlockFinished", {
     status: Schema.Literal("succeeded", "failed", "interrupted"),
   }),
-  Schema.TaggedStruct("BlockSkipped", { reason: Schema.String }),
+  Schema.TaggedStruct("BlockSkipped", {
+    reason: Schema.String,
+    /** Set when this skip honours a user's `BlockSkipRequested`, and so is the one that spends it. */
+    requested: Schema.optional(Schema.Boolean),
+  }),
   Schema.TaggedStruct("AttemptStarted", {
     number: Schema.Int,
     sessionId: Schema.optional(SessionId),

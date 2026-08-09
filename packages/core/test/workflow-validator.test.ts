@@ -40,7 +40,22 @@ interface Case {
   readonly catalog?: WorkflowCatalog
 }
 
-const gated = catalog([{ ...agentTask, id: "gated", skipWhenUnchanged: true }])
+const gated = catalog([
+  { ...agentTask, id: "gated", skipWhenUnchanged: true },
+  { ...verifyOutput, id: "judge", input: [] },
+  { ...verifyOutput, id: "gated-judge", input: [], skipWhenUnchanged: true },
+])
+
+const correctiveLoop = (implement: string, judge: string): WorkflowNode => ({
+  _tag: "Loop",
+  kind: "corrective",
+  policy: correctivePolicy.id,
+  feedbackRoute: { from: id("check"), to: id("implement") },
+  body: {
+    _tag: "Sequence",
+    children: [block("implement", implement), block("check", judge)],
+  },
+})
 
 const cases: ReadonlyArray<Case> = [
   { name: "a wired implement/verify sequence", tree: tree(implementThenVerify) },
@@ -50,7 +65,6 @@ const cases: ReadonlyArray<Case> = [
     tree: tree({ _tag: "Sequence", children: [block("implement", "gated"), commandNode] }),
     catalog: gated,
   },
-
   {
     name: "a skipWhenUnchanged block a downstream required input depends on",
     rule: "skip-when-unchanged",
@@ -61,6 +75,32 @@ const cases: ReadonlyArray<Case> = [
         block("verify", verifyOutput.id, { inputs: [id("implement")] }),
       ],
     }),
+    catalog: gated,
+  },
+  {
+    // They skip as a set, but each is refused on its own: a suppressed node is missing from every
+    // downstream input list that names it, whether or not a sibling still covers the field.
+    name: "two skipWhenUnchanged blocks covering one downstream input between them",
+    rule: "skip-when-unchanged",
+    tree: tree({
+      _tag: "Sequence",
+      children: [
+        block("first", "gated"),
+        block("second", "gated"),
+        block("verify", verifyOutput.id, { inputs: [id("first"), id("second")] }),
+      ],
+    }),
+    catalog: gated,
+  },
+  {
+    name: "a skipWhenUnchanged block a loop reads its verdict from",
+    rule: "skip-when-unchanged",
+    tree: tree(correctiveLoop(agentTask.id, "gated-judge")),
+    catalog: gated,
+  },
+  {
+    name: "a skipWhenUnchanged block inside a loop that judges by another block",
+    tree: tree(correctiveLoop("gated", "judge")),
     catalog: gated,
   },
 

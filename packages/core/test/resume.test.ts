@@ -27,7 +27,7 @@ import {
   WorkflowNode,
   Workspace,
 } from "../src/index.js"
-import { FakeScript, fakeProviders, of, waitFor, withEngine } from "./engine-harness.js"
+import { FakeScript, fakeProviders, of, startedIds, waitFor, withEngine } from "./engine-harness.js"
 import {
   fixturePath,
   makeRepo,
@@ -265,7 +265,7 @@ it("re-enters an interrupted loop without repeating what the journal already fin
   expect(of(events, "AttemptInterrupted").map((event) => event.blockId)).toEqual(["implement#2"])
 
   // Instance ids number past what the journal held, so no execution overwrote another's record.
-  expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual([
+  expect(startedIds(events)).toEqual([
     "explore",
     "implement",
     "verify",
@@ -347,7 +347,7 @@ it("raises a gate again when the interruption caught it undecided", async () => 
 
   expect(after.outcome.status).toBe("succeeded")
   expect(of(after.events, "ApprovalRequested")).toHaveLength(2)
-  expect(of(after.events, "BlockStarted").map((event) => event.blockId)).toEqual(["explore"])
+  expect(startedIds(after.events)).toEqual(["explore"])
 }, 120_000)
 
 it("falls back to a fresh session when the one a continue block resumes is gone", async () => {

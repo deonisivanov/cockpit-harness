@@ -14,7 +14,7 @@ import {
   validateWorkflow,
   verifyOutput,
 } from "../src/index.js"
-import { block, catalog, fakeProviders, id, of, withEngine } from "./engine-harness.js"
+import { block, catalog, fakeProviders, id, of, startedIds, withEngine } from "./engine-harness.js"
 import { readEvents, runCatalog, tempDir } from "./helpers.js"
 
 interface FakePlugin {
@@ -305,7 +305,7 @@ it("skips a block whose plugin is missing when that is its declared fallback", a
     ["work", expect.stringContaining("plugin-missing")],
   ])
   // The rest of the workflow still runs; nothing was substituted for the skipped block.
-  expect(of(events, "BlockStarted").map((event) => event.blockId)).toEqual(["after"])
+  expect(startedIds(events)).toEqual(["after"])
 }, 60_000)
 
 it("swaps to the declared alternative binding and records which one ran", async () => {

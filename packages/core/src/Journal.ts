@@ -104,7 +104,7 @@ export class Journal extends Context.Tag("cockpit/Journal")<
       status: "succeeded" | "failed" | "interrupted",
     ) => Effect.Effect<void, JournalError>
     readonly skipBlock: (
-      input: StartBlockInput & { readonly reason: string },
+      input: StartBlockInput & { readonly reason: string; readonly requested?: boolean },
     ) => Effect.Effect<void, JournalError>
 
     readonly startAttempt: (input: StartAttemptInput) => Effect.Effect<void, JournalError>
@@ -527,7 +527,11 @@ export const JournalLive = Layer.effect(
             return {
               runId: input.runId,
               blockId: input.blockId,
-              payload: { _tag: "BlockSkipped", reason: input.reason } as const,
+              payload: {
+                _tag: "BlockSkipped",
+                reason: input.reason,
+                ...(input.requested === true ? { requested: true } : {}),
+              } as const,
             }
           }),
         ),

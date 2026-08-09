@@ -309,7 +309,7 @@ it("skips a block and cancels the run without touching attempts", async () => {
   expect(events[2].payload).toMatchObject({ reason: "toggled off by the analyzer" })
 })
 
-it("recordedSkips pends a request until a BlockSkipped honours it, and nothing else", async () => {
+it("recordedSkips pends a request until the BlockSkipped that honours it, and nothing else", async () => {
   const trail = await withKernel(
     Effect.gen(function* () {
       const journal = yield* Journal
@@ -322,8 +322,8 @@ it("recordedSkips pends a request until a BlockSkipped honours it, and nothing e
       const pending = recordedSkips(yield* readEvents(runId))
       // The same fold feeds re-entry, so a fresh start and a resume agree on what is pending.
       const planned = [...(yield* buildResumePlan(runId)).skips]
-      // A visit that runs the node does not consume the request; only its BlockSkipped does —
-      // the one event the live consumption also writes, so the two views cannot diverge.
+      // A visit that runs the node does not consume the request; only the BlockSkipped that
+      // honours it does — the one event the live consumption also writes, so the two cannot diverge.
       yield* journal.startBlock({
         runId,
         blockId: BlockId.make("implement"),
@@ -331,21 +331,33 @@ it("recordedSkips pends a request until a BlockSkipped honours it, and nothing e
         kind: "agent",
       })
       const survivesAVisit = recordedSkips(yield* readEvents(runId))
+      // Nor does a skip the engine or a plugin decided on its own: the live Ref keeps the request
+      // for the visit that honours it, so a fold that spent it here would lose it on a resume.
       yield* journal.skipBlock({
         runId,
         blockId: BlockId.make("implement#2"),
         defId: "agent-task",
         kind: "agent",
+        reason: "no files changed since the run's base commit",
+      })
+      const survivesAnAutoSkip = recordedSkips(yield* readEvents(runId))
+      yield* journal.skipBlock({
+        runId,
+        blockId: BlockId.make("implement#3"),
+        defId: "agent-task",
+        kind: "agent",
         reason: "skipped by user request",
+        requested: true,
       })
       const consumed = recordedSkips(yield* readEvents(runId))
-      return { pending, planned, survivesAVisit, consumed }
+      return { pending, planned, survivesAVisit, survivesAnAutoSkip, consumed }
     }),
   )
 
   expect([...trail.pending]).toEqual(["implement"])
   expect(trail.planned).toEqual(["implement"])
   expect([...trail.survivesAVisit]).toEqual(["implement"])
+  expect([...trail.survivesAnAutoSkip]).toEqual(["implement"])
   expect(trail.consumed.size).toBe(0)
 })
 
