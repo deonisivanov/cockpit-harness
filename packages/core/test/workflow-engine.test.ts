@@ -5,7 +5,9 @@ import { expect, it } from "vitest"
 import {
   agentTask,
   BlockId,
+  CheckpointService,
   correctivePolicy,
+  JournalEvent,
   RunId,
   runCommand,
   verifyOutput,
@@ -535,4 +537,137 @@ it("fails a starved single-attempt block as a run failure with a verdict, not an
   expect(result.outcome.status).toBe("failed")
   expect(of(result.events, "RunFinished")[0].payload.status).toBe("failed")
   expect(of(result.events, "AttemptFinished")[0].payload.verdict).toBe("semantic-failure")
+}, 30_000)
+
+const gate = { ...runCommand, id: "gate", skipWhenUnchanged: true }
+const gateNode = block("gate", gate.id, { overrides: { command: { argv: ["true"] } } })
+
+/** The owner's question shape: reads the repository, answers into $COCKPIT_OUTPUT, writes nothing. */
+const answerOnly = {
+  ...verifyOutput,
+  id: "answer",
+  input: [],
+  output: [{ name: "summary", type: "string", required: true }] as const,
+  successCriteria: [],
+}
+
+const gates = catalog([gate, answerOnly])
+const unchanged = "no files changed since the run's base commit"
+
+const startedIds = (events: ReadonlyArray<JournalEvent>) =>
+  of(events, "BlockStarted").map((event) => event.blockId)
+
+it("skips a skipWhenUnchanged gate on a run that changed nothing", async () => {
+  const result = await withEngine(
+    { "agent-task": summary("looked around and changed nothing") },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        const outcome = yield* start(
+          { _tag: "Sequence", children: [block("implement", agentTask.id), gateNode] },
+          gates,
+        )
+        return { outcome, events: yield* readEvents(runId) }
+      }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(of(result.events, "BlockSkipped")[0].payload.reason).toBe(unchanged)
+  expect(startedIds(result.events)).not.toContain("gate")
+}, 30_000)
+
+it("runs a skipWhenUnchanged gate once a block before it has written a file", async () => {
+  const events = await withEngine(
+    {
+      "agent-task": {
+        ...summary("wrote the feature"),
+        writes: { "feature.ts": "export const x = 1\n" },
+      },
+    },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        yield* start(
+          { _tag: "Sequence", children: [block("implement", agentTask.id), gateNode] },
+          gates,
+        )
+        return yield* readEvents(runId)
+      }),
+  )
+
+  expect(of(events, "BlockSkipped")).toHaveLength(0)
+  expect(startedIds(events)).toContain("gate")
+}, 30_000)
+
+it("runs a gate with no flag on a run that changed nothing", async () => {
+  const events = await withEngine(
+    { "agent-task": summary("looked around and changed nothing") },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        yield* start({
+          _tag: "Sequence",
+          children: [
+            block("implement", agentTask.id),
+            block("cmd", runCommand.id, { overrides: { command: { argv: ["true"] } } }),
+          ],
+        })
+        return yield* readEvents(runId)
+      }),
+  )
+
+  expect(of(events, "BlockSkipped")).toHaveLength(0)
+  expect(startedIds(events)).toContain("cmd")
+}, 30_000)
+
+// The regression that fails if the `since` argument is ever dropped: `implement` changed a file,
+// the checkpoint after it committed that change, and `answer` changed nothing — which is exactly
+// the state `git status --porcelain` reports as clean while the run has plainly done work.
+it("runs the gate on work an earlier checkpoint already committed", async () => {
+  const events = await withEngine(
+    {
+      "agent-task": {
+        ...summary("wrote the feature"),
+        writes: { "feature.ts": "export const x = 1\n" },
+      },
+      answer: summary("nothing more to do"),
+    },
+    ({ runId, start }) =>
+      Effect.gen(function* () {
+        yield* start(
+          {
+            _tag: "Sequence",
+            children: [block("implement", agentTask.id), block("answer", answerOnly.id), gateNode],
+          },
+          gates,
+        )
+        return yield* readEvents(runId)
+      }),
+  )
+
+  expect(of(events, "CheckpointCreated").length).toBeGreaterThan(0)
+  expect(of(events, "BlockSkipped")).toHaveLength(0)
+  expect(startedIds(events)).toContain("gate")
+}, 30_000)
+
+// S11's headline scenario, pinned here rather than left to a manual pass: a question run answers
+// into $COCKPIT_OUTPUT, which sits outside the worktree, so the quality gates behind it never fire.
+it("skips the gate after an agent block that wrote only $COCKPIT_OUTPUT", async () => {
+  const result = await withEngine({ answer: summary("this project is a harness") }, (harness) =>
+    Effect.gen(function* () {
+      const outcome = yield* harness.start(
+        { _tag: "Sequence", children: [block("answer", answerOnly.id), gateNode] },
+        gates,
+      )
+      const checkpoints = yield* CheckpointService
+      return {
+        outcome,
+        changed: yield* checkpoints.changedFiles(harness.workspace, harness.workspace.baseCommit),
+        events: yield* readEvents(harness.runId),
+      }
+    }),
+  )
+
+  expect(result.outcome.status).toBe("succeeded")
+  expect(result.changed).toEqual([])
+  expect(result.outcome.outputs).toMatchObject({ answer: { summary: "this project is a harness" } })
+  expect(of(result.events, "BlockSkipped")[0].payload.reason).toBe(unchanged)
+  expect(startedIds(result.events)).not.toContain("gate")
 }, 30_000)

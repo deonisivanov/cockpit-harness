@@ -90,6 +90,8 @@ export const BlockDef = Schema.Struct({
   /** Agent blocks; a path inside `.cockpit` the loader reads into `promptTemplate` (contracts §11). */
   promptFile: Schema.optional(Schema.String),
   command: Schema.optional(CommandSpec),
+  /** Opt-in: a gate that polices changes is skipped when the run has not changed anything yet. */
+  skipWhenUnchanged: Schema.optional(Schema.Boolean),
   /** Workspace blocks only, like `command` for command blocks and `provider` for agent ones. */
   finalizeMode: Schema.optional(FinalizeMode),
   sessionPolicy: Schema.Literal("fresh", "continue"),

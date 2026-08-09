@@ -40,9 +40,29 @@ interface Case {
   readonly catalog?: WorkflowCatalog
 }
 
+const gated = catalog([{ ...agentTask, id: "gated", skipWhenUnchanged: true }])
+
 const cases: ReadonlyArray<Case> = [
   { name: "a wired implement/verify sequence", tree: tree(implementThenVerify) },
   { name: "a command block with an overridden argv", tree: tree(commandNode) },
+  {
+    name: "a skipWhenUnchanged block nothing downstream reads",
+    tree: tree({ _tag: "Sequence", children: [block("implement", "gated"), commandNode] }),
+    catalog: gated,
+  },
+
+  {
+    name: "a skipWhenUnchanged block a downstream required input depends on",
+    rule: "skip-when-unchanged",
+    tree: tree({
+      _tag: "Sequence",
+      children: [
+        block("implement", "gated"),
+        block("verify", verifyOutput.id, { inputs: [id("implement")] }),
+      ],
+    }),
+    catalog: gated,
+  },
 
   {
     name: "a block naming a definition nobody registered",

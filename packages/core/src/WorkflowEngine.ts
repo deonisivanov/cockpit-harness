@@ -1102,6 +1102,23 @@ export const WorkflowEngineLive = Layer.effect(
               return { verdict: "success" } satisfies AttemptOutcome
             }
 
+            // `since` is not optional here: the engine checkpoints after every write block, so
+            // porcelain status — the no-argument form — is clean at exactly this moment and would
+            // skip the gate on every run, changes or not.
+            if (def.skipWhenUnchanged === true) {
+              const changed = yield* checkpoints.changedFiles(workspace, workspace.baseCommit)
+              if (changed.length === 0) {
+                yield* journal.skipBlock({
+                  runId,
+                  blockId,
+                  defId: def.id,
+                  kind: def.kind,
+                  reason: "no files changed since the run's base commit",
+                })
+                return { verdict: "success" } satisfies AttemptOutcome
+              }
+            }
+
             const timeoutMs = node.overrides?.timeoutMs ?? def.timeoutMs
 
             // Command blocks reach no provider and no plugin, so there is nothing to preflight.

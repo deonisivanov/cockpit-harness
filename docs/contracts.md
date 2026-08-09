@@ -90,6 +90,11 @@ interface BlockDef<I, O> {
   promptFile?: string                        // agent blocks; path inside .cockpit, read into promptTemplate
                                              // at load (§11) — mutually exclusive with it
   command?: { argv: string[]; env?: Record<string, string>; successRules?: OutputRule[] }  // command blocks
+  skipWhenUnchanged?: boolean                // opt-in: the engine skips the block (BlockSkipped, reason
+                                             // "no files changed since the run's base commit") when the
+                                             // worktree holds nothing the run's base commit did not.
+                                             // For gates that police changes; validation refuses the flag
+                                             // on a block a downstream required input depends on.
   finalizeMode?: "squash" | "ordered"         // workspace blocks; default "squash"
   sessionPolicy: "fresh" | "continue"        // default "fresh" (ADR-004)
   retryPolicy: RetryPolicyRef

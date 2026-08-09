@@ -88,7 +88,7 @@ const commandResult: ReadonlyArray<ContractField> = [
  * Walks the tree in execution order so every rule that talks about "a prior block" can be decided
  * from the set of block ids that provably ran before the node being checked.
  */
-export const validateWorkflow = (
+const walk = (
   tree: WorkflowTree,
   catalog: WorkflowCatalog,
   /** A node to walk but never admit into `available` — the shape of it having been skipped. */
@@ -370,6 +370,37 @@ export const skipBreaksContract = (
 ): ReadonlyArray<ValidationError> => {
   const keyOf = (error: ValidationError) =>
     `${error.rule}|${error.path.join("/")}|${error.message}`
-  const baseline = new Set(validateWorkflow(tree, catalog).map(keyOf))
-  return validateWorkflow(tree, catalog, nodeId).filter((error) => !baseline.has(keyOf(error)))
+  const baseline = new Set(walk(tree, catalog).map(keyOf))
+  return walk(tree, catalog, nodeId).filter((error) => !baseline.has(keyOf(error)))
+}
+
+/**
+ * The walk, plus the same legality check over every block the engine may skip on its own: a
+ * `skipWhenUnchanged` flag that would starve a downstream block is refused where the tree is built
+ * rather than discovered mid-run.
+ */
+export const validateWorkflow = (
+  tree: WorkflowTree,
+  catalog: WorkflowCatalog,
+  suppressed?: BlockId,
+): ReadonlyArray<ValidationError> => {
+  const errors = walk(tree, catalog, suppressed)
+  if (suppressed !== undefined) return errors
+
+  const defs = new Map(catalog.blocks.map((def) => [def.id, def]))
+  const flagged = blocksIn(tree.root).filter(
+    (node) => defs.get(node.def)?.skipWhenUnchanged === true,
+  )
+  return [
+    ...errors,
+    ...flagged.flatMap((node) =>
+      skipBreaksContract(tree, catalog, node.id).map((broken) =>
+        fail(
+          "skip-when-unchanged",
+          broken.path,
+          `${node.id} may be skipped when nothing changed, but skipping it breaks ${broken.rule}: ${broken.message}`,
+        ),
+      ),
+    ),
+  ]
 }
