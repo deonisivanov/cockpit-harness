@@ -21,6 +21,37 @@ shot("awaiting-start", "awaiting-start", async (page) => {
   await expect(page.getByTestId("run-workflow")).toBeVisible()
 })
 
+// S9: the workflow panel sizes to its content — short trees stay short, long trees scroll.
+const paneHeights = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => {
+    const pane = document.querySelector('[data-testid="tree"]') as HTMLElement
+    const row = pane.parentElement as HTMLElement
+    const scroll = document.querySelector('[data-testid="tree-scroll"]') as HTMLElement
+    return {
+      pane: pane.getBoundingClientRect().height,
+      row: row.getBoundingClientRect().height,
+      scrollHeight: scroll.scrollHeight,
+      clientHeight: scroll.clientHeight,
+    }
+  })
+
+shot("tree-short", "tree-short", async (page) => {
+  await expect(page.getByTestId("tree-node")).toHaveCount(2)
+  await expect(page.getByTestId("run-workflow")).toBeVisible()
+  const { pane, row } = await paneHeights(page)
+  // The pane sizes to its 2-row content instead of stretching to the row's full height.
+  expect(pane).toBeLessThan(row * 0.5)
+})
+
+shot("tree-long", "tree-long", async (page) => {
+  await expect(page.getByTestId("tree-node")).toHaveCount(40)
+  await expect(page.getByTestId("run-workflow")).toBeVisible()
+  const { pane, row, scrollHeight, clientHeight } = await paneHeights(page)
+  // The pane is capped at the row's height and the inner region scrolls instead of the pane growing past it.
+  expect(pane).toBeLessThanOrEqual(row + 1)
+  expect(scrollHeight).toBeGreaterThan(clientHeight)
+})
+
 shot("failed-retry", "retry", async (page) => {
   await expect(page.getByTestId("failure-card")).toBeVisible()
   await page.getByTestId("expand-packet").click()

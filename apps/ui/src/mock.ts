@@ -15,6 +15,8 @@ export const MOCK_STATES = [
   "idle",
   "analyzing",
   "awaiting-start",
+  "tree-short",
+  "tree-long",
   "approval",
   "running",
   "retry",
@@ -78,6 +80,29 @@ const TREE: WorkflowNode = {
     { _tag: "Block", id: "code-review", def: "local-duo-review" },
     { _tag: "Block", id: "finalize", def: "finalize" },
   ],
+}
+
+/** S9: proves the panel sizes to a short workflow instead of stretching to the row's height. */
+const TREE_SHORT: WorkflowNode = {
+  _tag: "Sequence",
+  children: [
+    { _tag: "Block", id: "answer", def: "codex" },
+    { _tag: "Block", id: "finalize", def: "finalize" },
+  ],
+}
+
+/**
+ * S9: proves a long workflow scrolls inside the panel instead of stretching it. 40 rows because
+ * at ~25px each, 12 (the plan's illustrative count) never exceeds the row's available height in
+ * the 1600x980 e2e viewport — this count is chosen to actually overflow it.
+ */
+const TREE_LONG: WorkflowNode = {
+  _tag: "Sequence",
+  children: Array.from({ length: 40 }, (_, i) => ({
+    _tag: "Block" as const,
+    id: `block-${i + 1}`,
+    def: i % 2 === 0 ? "codex" : "implement",
+  })),
 }
 
 const ARTIFACTS: Record<string, Omit<ArtifactBody, "id">> = {
@@ -468,7 +493,7 @@ function fixture(state: MockState): Fixture {
     return { events: b.events, status: "running", streamFrom: 1 }
   }
 
-  if (state === "awaiting-start") {
+  if (state === "awaiting-start" || state === "tree-short" || state === "tree-long") {
     b.push({ _tag: "RunCreated", projectId: PROJECT, prompt: PROMPT })
     b.push({
       _tag: "TreeAnalyzed",
@@ -618,9 +643,10 @@ export function mockSource(state: MockState): Source {
     { id: "run_b6", projectId: PROJECT, prompt: "Interview export: include speaker labels", status: "cancelled", createdAt: new Date(START - 90_000_000).toISOString() },
   ]
 
+  const treeRoot = state === "tree-short" ? TREE_SHORT : state === "tree-long" ? TREE_LONG : TREE
   const planned: RunDetail = {
     run,
-    tree: { runId: RUN, templateId: "bugfix-with-reproduction", root: TREE },
+    tree: { runId: RUN, templateId: "bugfix-with-reproduction", root: treeRoot },
     retryPolicies: { "single-attempt": { maxAttempts: 1 }, corrective: { maxAttempts: 3 } },
   }
   // Analyzing starts before planning settles: the first fetch has no tree, the refetch does.
