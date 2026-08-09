@@ -82,6 +82,10 @@ export class Store extends Context.Tag("cockpit/Store")<
     ) => Effect.Effect<ReadonlyArray<AttemptRow>, JournalError>
     readonly attempt: (id: AttemptId) => Effect.Effect<AttemptRow | undefined, JournalError>
     readonly artifact: (id: ArtifactId) => Effect.Effect<ArtifactRow | undefined, JournalError>
+    readonly artifacts: (
+      runId: RunId,
+      kind: string,
+    ) => Effect.Effect<ReadonlyArray<ArtifactRow>, JournalError>
     /** The newest artifact of a kind, which is how a run's instantiated tree is found. */
     readonly latestArtifact: (
       runId: RunId,
@@ -177,6 +181,12 @@ export const StoreLive = Layer.effect(
           Effect.map((rows) => rows[0]),
           Effect.mapError(asJournalError("artifact")),
         ),
+
+      artifacts: (runId, kind) =>
+        sql<ArtifactRow>`
+          SELECT ${artifactColumns} FROM artifacts
+          WHERE run_id = ${runId} AND kind = ${kind}
+          ORDER BY rowid`.pipe(Effect.mapError(asJournalError("artifacts"))),
 
       latestArtifact: (runId, kind) =>
         sql<ArtifactRow>`

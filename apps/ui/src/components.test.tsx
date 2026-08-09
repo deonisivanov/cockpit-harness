@@ -1,8 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
+import { AttachmentChips, RunAttachments } from "./App.js"
 import type { EventPayload, JournalEvent, Run, RunDetail, WorkflowNode } from "./model.js"
 import { Rail } from "./Rail.js"
+import { ProseBox, RawSection } from "./render.js"
 import { applyEvents, emptyRunState } from "./store.js"
+import { OutcomeCard } from "./Stream.js"
 import { Tree } from "./Tree.js"
 
 let seq = 0
@@ -41,6 +44,7 @@ describe("Rail", () => {
         runs={runs}
         selectedRunId="r1"
         onSelect={() => {}}
+        onDelete={() => {}}
         onNewTask={() => {}}
         insightsOpen={false}
         onInsights={() => {}}
@@ -75,6 +79,12 @@ describe("Rail", () => {
     expect(html.indexOf("Refactor interview mode configuration")).toBeLessThan(
       html.indexOf("Fix interview recovery after reconnect"),
     )
+  })
+
+  it("offers a delete control on every task row", () => {
+    const html = render()
+    expect(html.match(/data-testid="delete-task"/g)).toHaveLength(3)
+    expect(html).toContain('aria-label="delete Fix interview recovery after reconnect"')
   })
 
   it("collapses to status dots only", () => {
@@ -158,7 +168,6 @@ describe("Tree", () => {
       selected={null}
       onSelect={() => {}}
       onSkip={() => {}}
-      onClose={() => {}}
       floating={false}
     />,
   )
@@ -184,7 +193,6 @@ describe("Tree", () => {
         selected={null}
         onSelect={() => {}}
         onSkip={() => {}}
-        onClose={() => {}}
         floating={false}
       />,
     )
@@ -206,7 +214,6 @@ describe("Tree", () => {
         selected={null}
         onSelect={() => {}}
         onSkip={() => {}}
-        onClose={() => {}}
         floating={false}
       />,
     )
@@ -225,11 +232,85 @@ describe("Tree", () => {
         selected={null}
         onSelect={() => {}}
         onSkip={() => {}}
-        onClose={() => {}}
         floating={false}
       />,
     )
     expect(out).toContain("opacity-45")
     expect(out).toContain('data-status="skipped"')
+  })
+})
+
+describe("result prose", () => {
+  it("renders an outcome card with its title, meta and prose paragraphs", () => {
+    const html = renderToStaticMarkup(
+      <OutcomeCard
+        focused={false}
+        row={{
+          kind: "outcome",
+          key: "1",
+          event: { seq: 1, ts: "", runId: "r", payload: { _tag: "BlockFinished", status: "succeeded" } },
+          title: "explore — finished",
+          meta: "11:04:15 · 12s",
+          failed: false,
+          paras: [
+            { kind: "p", text: "The reconnect path is mapped." },
+            { kind: "b", text: "No code was changed." },
+          ],
+        }}
+      />,
+    )
+    expect(html).toContain("explore — finished")
+    expect(html).toContain("11:04:15 · 12s")
+    expect(html).toContain("The reconnect path is mapped.")
+    expect(html).toContain("—  No code was changed.")
+  })
+
+  it("keeps the raw JSON behind a details element that starts closed", () => {
+    const html = renderToStaticMarkup(<RawSection value={{ ok: true }} />)
+    expect(html).toContain("<details")
+    expect(html).not.toContain("open")
+    expect(html).toContain("RAW")
+    expect(html).toContain("ok")
+  })
+
+  it("says so instead of rendering an empty prose box", () => {
+    const html = renderToStaticMarkup(<ProseBox paras={[]} />)
+    expect(html).toContain("No textual result was reported.")
+  })
+})
+
+describe("attachments", () => {
+  it("previews image drafts and names the rest, each with a remove control", () => {
+    const drafts = [
+      { file: new File(["png"], "shot.png", { type: "image/png" }), previewUrl: "blob:shot" },
+      { file: new File(["# notes"], "notes.md", { type: "text/markdown" }), previewUrl: null },
+    ]
+    const html = renderToStaticMarkup(<AttachmentChips attachments={drafts} onRemove={() => {}} />)
+    expect(html).toContain('src="blob:shot"')
+    expect(html).toContain("notes.md")
+    expect(html).toContain('data-testid="remove-attachment-0"')
+    expect(html).toContain('data-testid="remove-attachment-1"')
+  })
+
+  it("renders nothing for an empty draft list", () => {
+    expect(renderToStaticMarkup(<AttachmentChips attachments={[]} onRemove={() => {}} />)).toBe("")
+  })
+
+  it("shows a run's attachments: images inline, files as raw links", () => {
+    const html = renderToStaticMarkup(
+      <RunAttachments
+        attachments={[
+          { id: "art_1", name: "shot.png", bytes: 10 },
+          { id: "art_2", name: "notes.md", bytes: 7 },
+        ]}
+      />,
+    )
+    expect(html).toContain('src="/api/artifacts/art_1/raw"')
+    expect(html).toContain('href="/api/artifacts/art_2/raw"')
+    expect(html).toContain("notes.md")
+  })
+
+  it("renders nothing for a run without attachments", () => {
+    expect(renderToStaticMarkup(<RunAttachments attachments={[]} />)).toBe("")
   })
 })

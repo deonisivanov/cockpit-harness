@@ -15,10 +15,10 @@ const STATUS: Record<NodeStatus, { dot: string; name: string; label: string }> =
   running: { dot: "text-vio", name: "text-[#d2d2dc]", label: "● running" },
   done: { dot: "text-green", name: "text-[#d2d2dc]", label: "" },
   failed: { dot: "text-red", name: "text-[#d2d2dc]", label: "● failed" },
-  skipped: { dot: "text-slate", name: "text-[#4e4e58]", label: "● skipped" },
+  skipped: { dot: "text-slate", name: "text-[#797984]", label: "● skipped" },
   waiting: { dot: "text-amber", name: "text-[#d2d2dc]", label: "● waiting" },
   interrupted: { dot: "text-amber", name: "text-[#d2d2dc]", label: "● interrupted" },
-  pending: { dot: "text-[#3d3d46]", name: "text-[#6a6a76]", label: "" },
+  pending: { dot: "text-[#64646f]", name: "text-[#6a6a76]", label: "" },
 }
 
 const durationOf = (startedAt?: string, finishedAt?: string): string => {
@@ -50,35 +50,26 @@ export interface TreeProps {
   readonly selected: string | null
   readonly onSelect: (blockId: string | null) => void
   readonly onSkip: (blockId: string) => void
-  readonly onClose: () => void
   readonly floating: boolean
 }
 
-export function Tree({ detail, state, selected, onSelect, onSkip, onClose, floating }: TreeProps) {
+export function Tree({ detail, state, selected, onSelect, onSkip, floating }: TreeProps) {
   const rows = useMemo(() => (detail?.tree ? flattenTree(detail.tree.root) : []), [detail])
 
   return (
     <aside
       data-testid="tree"
-      className={`flex flex-none flex-col overflow-hidden rounded-xl border border-white/8 bg-panel ${
+      className={`flex flex-none flex-col overflow-hidden rounded-xl border border-white/12 bg-panel ${
         floating
           ? "absolute top-3 right-3 z-20 max-h-[calc(100%-1.5rem)] w-[340px] shadow-[0_12px_44px_rgba(0,0,0,0.62)]"
           : "relative self-start max-h-full w-[352px]"
       }`}
     >
-      <div className="flex flex-none items-baseline gap-2.5 border-b border-white/6 bg-head px-3.5 py-2.5">
+      <div className="flex flex-none items-baseline gap-2.5 border-b border-white/9 bg-head px-3.5 py-2.5">
         <span className="font-mono text-[12px] font-semibold text-[#c4c4ce]">workflow</span>
-        <span className="flex-1 font-mono text-[10.5px] text-[#42424c]">
+        <span className="flex-1 font-mono text-[10.5px] text-[#6b6b77]">
           {detail?.tree?.templateId ?? "assembled per-task by the analyzer"}
         </span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="close workflow"
-          className="font-mono text-[11px] font-medium text-ink-4 hover:text-ink-2"
-        >
-          ]
-        </button>
       </div>
 
       <div data-testid="tree-scroll" className="flex-1 overflow-y-auto px-1.5 pt-2 pb-6">
@@ -130,8 +121,8 @@ function TreeNode({
         <span className="font-mono text-[11.5px] text-ink-4">loop</span>
         <span
           data-testid="loop-indicator"
-          className={`rounded-xs border border-white/9 bg-white/4 px-1.5 py-px font-mono text-[10px] font-medium ${
-            loop.current ? "text-[#c4c4ce]" : "text-[#55555f]"
+          className={`rounded-xs border border-white/13 bg-white/4 px-1.5 py-px font-mono text-[10px] font-medium ${
+            loop.current ? "text-[#c4c4ce]" : "text-[#7e7e8a]"
           }`}
         >
           {loop.max === undefined ? `attempt ${loop.current}` : `${loop.current}/${loop.max}`}
@@ -145,7 +136,7 @@ function TreeNode({
           />
         ))}
         {row.feedback && loop.ticks.length > 1 && (
-          <span className="font-mono text-[9px] text-[#5c5c67]">→ feedback</span>
+          <span className="font-mono text-[9px] text-[#87878f]">→ feedback</span>
         )}
       </div>
     )
@@ -156,7 +147,7 @@ function TreeNode({
       <div className="flex items-center gap-[7px] rounded-sm px-2 py-1" title={row.label}>
         <span className="flex-none" style={{ width: row.depth * 16 }} />
         <span className="font-mono text-[11.5px] text-ink-4">if</span>
-        <span className="truncate font-mono text-[10px] text-[#55555f]">{row.label}</span>
+        <span className="truncate font-mono text-[10px] text-[#7e7e8a]">{row.label}</span>
       </div>
     )
   }
@@ -202,12 +193,12 @@ function TreeNode({
         }`}
       >
         <span className="flex-none" style={{ width: row.depth * 14 }} />
-        {row.depth > 0 && <span className="flex-none font-mono text-[11px] text-[#33333c]">└</span>}
+        {row.depth > 0 && <span className="flex-none font-mono text-[11px] text-[#5a5a68]">└</span>}
         {isGate && <span className={`flex-none text-[8px] ${style.dot}`}>◆</span>}
         <span className={`flex-none font-mono text-[11.5px] font-semibold ${style.name}`}>
           {label}
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#3d3d46]">
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#64646f]">
           · {badge}
         </span>
         {style.label && (
@@ -232,7 +223,7 @@ function TreeNode({
           data-testid="skip-block"
           title="Skip this block's next visit; refused if a later block requires its output"
           onClick={() => onSkip(row.id)}
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm border border-white/10 bg-panel px-1.5 font-mono text-[9.5px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:border-amber/40 hover:text-amber"
+          className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm border border-white/14 bg-panel px-1.5 font-mono text-[9.5px] text-ink-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:border-amber/40 hover:text-amber"
         >
           skip
         </button>
@@ -242,7 +233,7 @@ function TreeNode({
         attempts.map((a) => (
           <div
             key={a.id}
-            className="my-px ml-[42px] flex items-baseline gap-2.5 border-l border-white/7 px-2 py-1 font-mono text-[10.5px]"
+            className="my-px ml-[42px] flex items-baseline gap-2.5 border-l border-white/10 px-2 py-1 font-mono text-[10.5px]"
           >
             <span
               className={
@@ -255,7 +246,7 @@ function TreeNode({
             >
               {a.status === "succeeded" ? "✓" : a.status === "running" ? "●" : "✕"}
             </span>
-            <span className="flex-1 text-[#5c5c67]">
+            <span className="flex-1 text-[#87878f]">
               attempt {a.number}
               {a.sessionId ? ` · ${a.sessionId}` : ""}
             </span>

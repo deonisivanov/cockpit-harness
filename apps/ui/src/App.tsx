@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { httpSource, type Source } from "./api.js"
+import { httpSource, type NewAttachment, type Source } from "./api.js"
 import { Insights } from "./Insights.js"
 import { isMockState, mockSource } from "./mock.js"
-import type { Project, Run, RunDetail, RunStatus, TerminalHandoff } from "./model.js"
+import type {
+  Project,
+  Run,
+  RunAttachment,
+  RunDetail,
+  RunStatus,
+  TerminalHandoff,
+} from "./model.js"
 import {
   buildRows,
   filterRows,
@@ -53,7 +60,6 @@ export default function App() {
   const [runId, setRunId] = useState<string | null>(null)
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [railOpen, setRailOpen] = useState(true)
-  const [treeOpen, setTreeOpen] = useState(true)
   const [width, setWidth] = useState(() => window.innerWidth)
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null)
   const [streamMode, setStreamMode] = useState<StreamMode>("essential")
@@ -62,6 +68,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ scope: ActionScope; message: string } | null>(null)
   const [prompt, setPrompt] = useState("")
+  const [attachments, setAttachments] = useState<readonly DraftAttachment[]>([])
   const [handoff, setHandoff] = useState<TerminalHandoff | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -77,10 +84,6 @@ export default function App() {
     window.addEventListener("resize", onResize)
     return () => window.removeEventListener("resize", onResize)
   }, [])
-
-  useEffect(() => {
-    setTreeOpen(!narrow)
-  }, [narrow])
 
   useEffect(() => {
     setRailOpen(!tiny)
@@ -213,6 +216,29 @@ export default function App() {
 
   const runNow = useCallback(() => enterRun((id) => source.start(id)), [enterRun, source])
 
+  const deleteRun = useCallback(
+    (id: string) => {
+      if (busy) return
+      const target = runs.find((r) => r.id === id)
+      // Native confirm, not a layout element: delete drops the branch and every checkpoint on it.
+      if (!window.confirm(`Delete "${target?.prompt ?? id}" and everything it produced? This cannot be undone.`)) {
+        return
+      }
+      void act("run", async () => {
+        await source.deleteRun(id)
+        if (project) setRuns(await source.runs(project.id))
+        if (id === runId) {
+          setRunId(null)
+          setSelectedBlock(null)
+          setFocus(-1)
+          setExpanded(new Set())
+          setHandoff(null)
+        }
+      })
+    },
+    [act, source, project, runId, busy, runs],
+  )
+
   const resume = useCallback(() => enterRun((id) => source.resume(id)), [enterRun, source])
 
   const regenerate = useCallback(() => {
@@ -236,12 +262,33 @@ export default function App() {
   const startRun = useCallback(() => {
     if (!project || !prompt.trim()) return
     void act("start", async () => {
-      const { runId: created } = await source.createRun(project.id, prompt.trim())
+      const encoded = await Promise.all(attachments.map((draft) => encodeAttachment(draft.file)))
+      const { runId: created } = await source.createRun(project.id, prompt.trim(), encoded)
       setRunId(created)
       setRuns(await source.runs(project.id))
       setPrompt("")
+      attachments.forEach((draft) => draft.previewUrl && URL.revokeObjectURL(draft.previewUrl))
+      setAttachments([])
     })
-  }, [act, source, project, prompt])
+  }, [act, source, project, prompt, attachments])
+
+  const attach = useCallback((files: readonly File[]) => {
+    setAttachments((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        file,
+        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+      })),
+    ])
+  }, [])
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => {
+      const gone = prev[index]
+      if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl)
+      return prev.filter((_, at) => at !== index)
+    })
+  }, [])
 
   const selectProject = useCallback((id: string) => {
     setSelectedProjectId(id)
@@ -275,9 +322,8 @@ export default function App() {
         setFocus((f) => Math.max(0, f - 1))
       } else if (e.key === "o") {
         const row = rows[focus]
-        if (row) toggleRow(row.key)
-      } else if (e.key === "t") {
-        setTreeOpen((v) => !v)
+        // Only rows with an expandable body; cards ignore the key rather than leak into `expanded`.
+        if (row && (row.kind === "event" || row.kind === "failure")) toggleRow(row.key)
       } else if (e.key === "G") {
         setFocus(rows.length - 1)
       } else if (e.key === "a" && state.gates.size > 0) {
@@ -324,18 +370,6 @@ export default function App() {
     [state.events],
   )
 
-  const treeToggle =
-    narrow && runId ? (
-      <button
-        type="button"
-        data-testid="tree-toggle"
-        onClick={() => setTreeOpen((v) => !v)}
-        className="flex-none rounded-sm border border-white/12 px-2 py-0.5 font-mono text-[10px] text-ink-2 hover:border-vio/40 hover:text-ink"
-      >
-        {treeOpen ? "workflow ✕" : "workflow"}
-      </button>
-    ) : null
-
   return (
     <div className="flex h-full flex-col bg-bg">
       <div className="flex min-h-0 flex-1">
@@ -355,6 +389,7 @@ export default function App() {
             setHandoff(null)
             setInsightsOpen(false)
           }}
+          onDelete={deleteRun}
           onNewTask={() => {
             setRunId(null)
             setHandoff(null)
@@ -376,7 +411,7 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           {!insightsOpen && runId && run && (
-            <div className="mx-3 mt-3 flex-none rounded-xl border border-white/6 bg-head px-4 pt-3.5 pb-3">
+            <div className="mx-3 mt-3 flex-none rounded-xl border border-white/9 bg-head px-4 pt-3.5 pb-3">
               <div className="flex items-start gap-3.5">
                 <div
                   className={`mt-px flex-none rounded-md border px-3 py-1.5 font-sans text-[12px] font-semibold ${STATUS_TONE[state.runStatus]}`}
@@ -387,8 +422,9 @@ export default function App() {
                   {run.prompt}
                 </div>
               </div>
+              <RunAttachments attachments={detail?.attachments ?? []} />
               <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-                <span className="font-sans text-[11.5px] text-[#5c5c67]" data-testid="elapsed">
+                <span className="font-sans text-[11.5px] text-[#87878f]" data-testid="elapsed">
                   {elapsed}
                 </span>
                 {note && <span className="font-sans text-[11.5px] text-ink-4">· {note}</span>}
@@ -522,22 +558,19 @@ export default function App() {
                   busy={busy}
                   gateError={error?.scope === "gate" ? error.message : null}
                   questionError={error?.scope === "question" ? error.message : null}
-                  treeToggle={treeToggle}
+                  insetForTree={narrow}
                 />
-                {treeOpen && (
-                  <Tree
-                    detail={detail}
-                    state={state}
-                    selected={selectedBlock}
-                    onSelect={(id) => {
-                      setSelectedBlock(id)
-                      setFocus(-1)
-                    }}
-                    onSkip={skipBlock}
-                    onClose={() => setTreeOpen(false)}
-                    floating={narrow}
-                  />
-                )}
+                <Tree
+                  detail={detail}
+                  state={state}
+                  selected={selectedBlock}
+                  onSelect={(id) => {
+                    setSelectedBlock(id)
+                    setFocus(-1)
+                  }}
+                  onSkip={skipBlock}
+                  floating={narrow}
+                />
               </>
             ) : (
               <IdleScreen
@@ -550,17 +583,110 @@ export default function App() {
                 error={error?.scope === "start" ? error.message : null}
                 runs={runs}
                 onSelect={setRunId}
+                attachments={attachments}
+                onAttach={attach}
+                onRemoveAttachment={removeAttachment}
               />
             )}
           </div>
         </main>
       </div>
 
-      <div className="flex flex-none items-center gap-1.5 border-t border-white/6 bg-[#0a0a0d] px-3 py-1.5">
-        <span className="font-mono text-[10px] text-[#33333c]">
-          j/k move · o expand · t tree · G end · esc clear filter · a approve
+      <div className="flex flex-none items-center gap-1.5 border-t border-white/9 bg-rail px-3 py-1.5">
+        <span className="font-mono text-[10px] text-[#5a5a68]">
+          j/k move · o expand · G end · esc clear filter · a approve
         </span>
+        {error?.scope === "run" && !(runId && run) && (
+          <span data-testid="run-error" className="ml-auto font-mono text-[10px] text-red">
+            {error.message}
+          </span>
+        )}
       </div>
+    </div>
+  )
+}
+
+/** A file picked or pasted into the new-task form, kept as-is until Analyze uploads it. */
+export interface DraftAttachment {
+  readonly file: File
+  /** Object URL for an image thumbnail; null for everything else. */
+  readonly previewUrl: string | null
+}
+
+const encodeAttachment = (file: File) =>
+  new Promise<NewAttachment>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const url = String(reader.result)
+      resolve({ name: file.name, contentBase64: url.slice(url.indexOf(",") + 1) })
+    }
+    reader.onerror = () => reject(reader.error ?? new Error(`could not read ${file.name}`))
+    reader.readAsDataURL(file)
+  })
+
+const IMAGE_NAME = /\.(png|jpe?g|gif|webp|svg|avif)$/i
+
+/** What the run was created with; images preview inline, everything else opens from its name. */
+export function RunAttachments({ attachments }: { attachments: readonly RunAttachment[] }) {
+  if (attachments.length === 0) return null
+  return (
+    <div data-testid="run-attachments" className="mt-2.5 flex flex-wrap items-end gap-2">
+      {attachments.map((attachment) => {
+        const raw = `/api/artifacts/${attachment.id}/raw`
+        return IMAGE_NAME.test(attachment.name) ? (
+          <a key={attachment.id} href={raw} target="_blank" rel="noreferrer" title={attachment.name}>
+            <img
+              src={raw}
+              alt={attachment.name}
+              className="max-h-24 rounded-md border border-white/14"
+            />
+          </a>
+        ) : (
+          <a
+            key={attachment.id}
+            href={raw}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-sm border border-white/12 px-2 py-1 font-mono text-[10.5px] text-[#8f8f9c] hover:text-ink"
+          >
+            {attachment.name}
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
+export function AttachmentChips({
+  attachments,
+  onRemove,
+}: {
+  attachments: readonly DraftAttachment[]
+  onRemove: (index: number) => void
+}) {
+  if (attachments.length === 0) return null
+  return (
+    <div data-testid="attachment-chips" className="mt-2 flex flex-wrap items-end gap-2">
+      {attachments.map((attachment, index) => (
+        <span
+          key={`${attachment.file.name}-${index}`}
+          className="flex items-center gap-1.5 rounded-sm border border-white/12 px-2 py-1 font-mono text-[10.5px] text-[#8f8f9c]"
+        >
+          {attachment.previewUrl && (
+            <img src={attachment.previewUrl} alt="" className="max-h-12 rounded-sm" />
+          )}
+          <span className="max-w-48 truncate">{attachment.file.name}</span>
+          <button
+            type="button"
+            data-testid={`remove-attachment-${index}`}
+            onClick={() => onRemove(index)}
+            aria-label={`Remove ${attachment.file.name}`}
+            className="text-[#87878f] hover:text-red"
+          >
+            ×
+          </button>
+        </span>
+      ))}
     </div>
   )
 }
@@ -575,6 +701,9 @@ function IdleScreen({
   error,
   runs,
   onSelect,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
 }: {
   projectName: string
   hasProject: boolean
@@ -585,30 +714,63 @@ function IdleScreen({
   error: string | null
   runs: readonly Run[]
   onSelect: (id: string) => void
+  attachments: readonly DraftAttachment[]
+  onAttach: (files: readonly File[]) => void
+  onRemoveAttachment: (index: number) => void
 }) {
+  const fileInput = useRef<HTMLInputElement>(null)
   return (
     <section
       data-testid="idle"
-      className="flex flex-1 flex-col justify-center overflow-y-auto rounded-xl border border-white/6 bg-panel px-[12%]"
+      className="flex flex-1 flex-col justify-center overflow-y-auto rounded-xl border border-white/9 bg-panel px-[12%]"
     >
       <div className="mb-3.5 font-mono text-[11px] font-medium tracking-[0.12em] text-ink-4">
         NEW TASK · {projectName.toUpperCase()}
       </div>
-      <div className="rounded-xl border border-white/9 bg-surface px-4 py-3.5">
+      <div className="rounded-xl border border-white/13 bg-surface px-4 py-3.5">
         <textarea
           data-testid="prompt-input"
           value={prompt}
           onChange={(e) => onPrompt(e.target.value)}
           placeholder="Describe the task, or paste an issue URL…"
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files)
+            if (files.length > 0) {
+              e.preventDefault()
+              onAttach(files)
+            }
+          }}
           className="min-h-[76px] w-full resize-none bg-transparent font-mono text-[13px] leading-[1.6] text-[#c9c9d4] outline-none placeholder:text-[#6a6a76]"
         />
-        <div className="mt-3 flex items-center gap-2 border-t border-white/5 pt-3">
-          <span className="rounded-sm border border-white/8 px-2 py-1.5 font-mono text-[10.5px] text-[#8f8f9c]">
+        <AttachmentChips attachments={attachments} onRemove={onRemoveAttachment} />
+        <div className="mt-3 flex items-center gap-2 border-t border-white/8 pt-3">
+          <span className="rounded-sm border border-white/12 px-2 py-1.5 font-mono text-[10.5px] text-[#8f8f9c]">
             claude-code
           </span>
-          <span className="rounded-sm border border-white/8 px-2 py-1.5 font-mono text-[10.5px] text-[#8f8f9c]">
+          <span className="rounded-sm border border-white/12 px-2 py-1.5 font-mono text-[10.5px] text-[#8f8f9c]">
             analyzer: auto
           </span>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            data-testid="attach-input"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length > 0) onAttach(files)
+              e.target.value = ""
+            }}
+          />
+          <button
+            type="button"
+            data-testid="attach-files"
+            onClick={() => fileInput.current?.click()}
+            title="Attach images or files; pasting a screenshot into the prompt works too"
+            className="rounded-sm border border-white/12 px-2 py-1.5 font-mono text-[10.5px] text-[#8f8f9c] hover:border-vio/40 hover:text-ink"
+          >
+            + attach
+          </button>
           <div className="flex-1" />
           <button
             type="button"
@@ -626,7 +788,7 @@ function IdleScreen({
           </div>
         )}
       </div>
-      <div className="mt-6 mb-2 font-mono text-[9.5px] font-medium tracking-[0.14em] text-[#3f3f49]">
+      <div className="mt-6 mb-2 font-mono text-[9.5px] font-medium tracking-[0.14em] text-[#666672]">
         RECENT
       </div>
       {runs.map((r) => (
@@ -634,10 +796,10 @@ function IdleScreen({
           key={r.id}
           type="button"
           onClick={() => onSelect(r.id)}
-          className="flex items-center gap-2.5 border-b border-white/4 px-0.5 py-2 text-left font-mono text-[12px] text-[#8f8f9c] hover:text-ink"
+          className="flex items-center gap-2.5 border-b border-white/6 px-0.5 py-2 text-left font-mono text-[12px] text-[#8f8f9c] hover:text-ink"
         >
           <span className="min-w-0 flex-1 truncate">{r.prompt}</span>
-          <span className="text-[10.5px] text-[#42424c]">{r.status}</span>
+          <span className="text-[10.5px] text-[#6b6b77]">{r.status}</span>
         </button>
       ))}
     </section>

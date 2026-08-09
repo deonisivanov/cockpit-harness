@@ -5,12 +5,13 @@ import type { ArtifactBody, EventPayload, JournalEvent } from "./model.js"
 import {
   fmtClock,
   fmtDuration,
+  resultProse,
   TERMINAL_TITLE,
   toneClass,
   type StreamMode,
   type StreamRow,
 } from "./presentation.js"
-import { Ansi, ArtifactBodyView, Code, Markdown } from "./render.js"
+import { Ansi, ArtifactBodyView, Markdown, ProseBox, ProseParas, RawSection } from "./render.js"
 import type { RunState } from "./store.js"
 
 function useArtifact(source: Source, id: string | undefined) {
@@ -38,10 +39,10 @@ function Section({ title, note, children }: { title: string; note?: string; chil
   return (
     <div>
       <div className="mb-1.5 flex items-baseline gap-2.5">
-        <span className="font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#55555f]">
+        <span className="font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#7e7e8a]">
           {title}
         </span>
-        {note && <span className="font-mono text-[10px] text-[#3f3f49]">{note}</span>}
+        {note && <span className="font-mono text-[10px] text-[#666672]">{note}</span>}
       </div>
       {children}
     </div>
@@ -53,7 +54,7 @@ function KV({ pairs }: { pairs: readonly (readonly [string, ReactNode])[] }) {
     <div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-[3px] font-mono text-[11.5px] leading-[1.6]">
       {pairs.map(([k, v], i) => (
         <div key={i} className="contents">
-          <span className="text-[#55555f]">{k}</span>
+          <span className="text-[#7e7e8a]">{k}</span>
           <span className="min-w-0 break-all text-ink">{v}</span>
         </div>
       ))}
@@ -147,12 +148,21 @@ function EventDetail({ event, source }: { event: JournalEvent; source: Source })
         </Section>
       )
     case "ResultProduced":
-      return p.outputRef ? (
-        <ArtifactSection source={source} id={p.outputRef} title="RESULT" />
-      ) : (
-        <Section title="RESULT">
-          <Code text={JSON.stringify(p.outputInline ?? null, null, 2)} lang="json" />
-        </Section>
+      if (p.outputInline === undefined) {
+        return p.outputRef ? (
+          <ArtifactSection source={source} id={p.outputRef} title="RESULT" />
+        ) : (
+          <RawSection value={null} />
+        )
+      }
+      return (
+        <div className="flex flex-col gap-3">
+          <Section title="RESULT">
+            <ProseBox paras={resultProse(p.outputInline)} />
+          </Section>
+          {p.outputRef && <ArtifactSection source={source} id={p.outputRef} title="OUTPUT" />}
+          <RawSection value={p.outputInline} />
+        </div>
       )
     case "ArtifactCreated":
       return (
@@ -217,9 +227,7 @@ function EventDetail({ event, source }: { event: JournalEvent; source: Source })
           <Section title="RATIONALE">
             <Markdown text={p.rationale} />
           </Section>
-          <Section title="DECISION">
-            <Code text={JSON.stringify(p.decision, null, 2)} lang="json" />
-          </Section>
+          <RawSection value={p.decision} />
         </div>
       )
     case "TreeValidated":
@@ -268,11 +276,7 @@ function EventDetail({ event, source }: { event: JournalEvent; source: Source })
         </Section>
       )
     default:
-      return (
-        <Section title="PAYLOAD">
-          <Code text={JSON.stringify(p, null, 2)} lang="json" />
-        </Section>
-      )
+      return <RawSection value={p} />
   }
 }
 
@@ -282,7 +286,6 @@ function EventRow({
   open,
   focused,
   live,
-  wrap,
   onToggle,
 }: {
   row: Extract<StreamRow, { kind: "event" }>
@@ -290,7 +293,6 @@ function EventRow({
   open: boolean
   focused: boolean
   live: boolean
-  wrap: boolean
   onToggle: () => void
 }) {
   return (
@@ -316,7 +318,7 @@ function EventRow({
         <span
           className={`min-w-0 flex-1 font-mono text-[12px] leading-[1.7] ${
             focused || open ? "text-[#dcdce6]" : "text-[#a2a2ae]"
-          } ${wrap ? "break-all whitespace-pre-wrap" : "truncate"}`}
+          } truncate`}
         >
           {row.view.summary}
         </span>
@@ -356,21 +358,21 @@ function ApprovalCard({
   return (
     <div
       data-testid="approval-card"
-      className={`mx-3.5 mt-2.5 mb-3.5 overflow-hidden rounded-xl border border-amber/30 bg-[#0e0d0b] ${
+      className={`mx-3.5 mt-2.5 mb-3.5 overflow-hidden rounded-xl border border-amber/30 bg-[#1d1a14] ${
         decided ? "" : "animate-ck-glow"
       }`}
     >
       <div className="flex items-center gap-2.5 border-b border-amber/16 bg-amber/5 px-4 py-2.5">
         <span className="font-mono text-[11px] text-amber">◆</span>
         <span className="font-mono text-[12px] font-semibold text-amber-hi">{row.gateId}</span>
-        <span className="font-mono text-[11px] text-[#7a6a4a]">
+        <span className="font-mono text-[11px] text-[#a08d63]">
           {decided ? "decided" : "human gate · execution paused"}
         </span>
       </div>
       <div className="px-4 py-4">
         <ArtifactSection source={source} id={row.payloadRef} title="" />
       </div>
-      <div className="flex items-center gap-2.5 border-t border-white/5 bg-[#0b0b0e] px-4 py-3">
+      <div className="flex items-center gap-2.5 border-t border-white/8 bg-panel px-4 py-3">
         <button
           type="button"
           data-testid="approve"
@@ -394,11 +396,11 @@ function ApprovalCard({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="note (optional)"
-            className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#0a0a0d] px-2.5 py-2 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#42424c] focus:border-vio/40"
+            className="min-w-0 flex-1 rounded-md border border-white/14 bg-code px-2.5 py-2 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#6b6b77] focus:border-vio/40"
           />
         )}
         <span
-          className={`ml-auto font-mono text-[10.5px] ${error ? "text-red" : "text-[#42424c]"}`}
+          className={`ml-auto font-mono text-[10.5px] ${error ? "text-red" : "text-[#6b6b77]"}`}
           data-testid={error ? "gate-error" : undefined}
         >
           {error ??
@@ -448,7 +450,7 @@ function QuestionCard({
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             placeholder="answer…"
-            className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#0a0a0d] px-2.5 py-2.5 font-mono text-[12px] text-[#c9c9d4] outline-none placeholder:text-[#42424c] focus:border-blue/40"
+            className="min-w-0 flex-1 rounded-md border border-white/14 bg-code px-2.5 py-2.5 font-mono text-[12px] text-[#c9c9d4] outline-none placeholder:text-[#6b6b77] focus:border-blue/40"
           />
           <button
             type="submit"
@@ -460,8 +462,8 @@ function QuestionCard({
           </button>
         </form>
       ) : (
-        <div className="mt-3 border-t border-white/5 pt-2.5">
-          <div className="font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#55555f]">
+        <div className="mt-3 border-t border-white/8 pt-2.5">
+          <div className="font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#7e7e8a]">
             ANSWERED
           </div>
           <div className="mt-1 font-mono text-[12px] leading-[1.6] text-[#9a9aa6]">
@@ -499,7 +501,7 @@ function FailureCard({
       </div>
       <div className="font-mono text-[12px] leading-[1.6] text-[#b0b0bc]">{row.title}</div>
       <div className="mt-2.5 flex flex-wrap gap-4">
-        <span className="font-mono text-[10.5px] text-[#5c5c67]">{row.meta}</span>
+        <span className="font-mono text-[10.5px] text-[#87878f]">{row.meta}</span>
         {row.packetRef && (
           <button
             type="button"
@@ -516,6 +518,37 @@ function FailureCard({
           <ArtifactSection source={source} id={row.packetRef} title="FEEDBACK PACKET" />
         </div>
       )}
+    </div>
+  )
+}
+
+/** The reference's isOutcome card: how a finished block reads, in words, before any numbers. */
+export function OutcomeCard({
+  row,
+  focused,
+}: {
+  row: Extract<StreamRow, { kind: "outcome" }>
+  focused: boolean
+}) {
+  return (
+    <div
+      data-testid="outcome-card"
+      className={`mx-3.5 mt-2 mb-3.5 overflow-hidden rounded-xl border bg-head ${
+        focused ? "border-vio/40" : "border-white/13"
+      }`}
+    >
+      <div className="flex items-center gap-2.5 border-b border-white/13 px-4 py-[11px]">
+        <span
+          className={`h-1.5 w-1.5 flex-none rounded-full ${row.failed ? "bg-red" : "bg-green"}`}
+        />
+        <span className="font-sans text-[13px] leading-[1.3] font-semibold text-[#e4e4ec]">
+          {row.title}
+        </span>
+        <span className="ml-auto font-mono text-[10.5px] text-[#6b6b77]">{row.meta}</span>
+      </div>
+      <div className="flex flex-col gap-[9px] px-[17px] py-3.5">
+        <ProseParas paras={row.paras} />
+      </div>
     </div>
   )
 }
@@ -540,14 +573,14 @@ function SummaryCard({
   const checkpoint = state.events.findLast((e) => e.payload._tag === "CheckpointCreated")
 
   const ok = row.status === "succeeded"
-  const accent = ok ? "border-green/24" : row.status === "failed" ? "border-red/24" : "border-white/10"
+  const accent = ok ? "border-green/24" : row.status === "failed" ? "border-red/24" : "border-white/14"
 
   return (
     <div
       data-testid="summary-card"
-      className={`mx-3.5 mt-2.5 mb-4 overflow-hidden rounded-xl border ${accent} bg-[#0a0d0b]`}
+      className={`mx-3.5 mt-2.5 mb-4 overflow-hidden rounded-xl border ${accent} bg-[#141b17]`}
     >
-      <div className="flex items-center gap-2.5 border-b border-white/6 px-4 py-3">
+      <div className="flex items-center gap-2.5 border-b border-white/9 px-4 py-3">
         <span className={ok ? "text-green" : "text-red"}>{ok ? "✓" : "✕"}</span>
         <span
           className={`font-mono text-[12.5px] font-semibold ${ok ? "text-green-hi" : "text-red-hi"}`}
@@ -555,19 +588,25 @@ function SummaryCard({
           run finished · {row.status}
         </span>
       </div>
-      <div className="grid grid-cols-3 border-b border-white/5">
+      <div
+        data-testid="summary-prose"
+        className="flex flex-col gap-[9px] border-b border-white/12 px-[17px] py-[15px]"
+      >
+        <ProseParas paras={row.paras} />
+      </div>
+      <div className="grid grid-cols-3 border-b border-white/8">
         {[
           ["BLOCKS", `${done} / ${blocks.length}`],
           ["ATTEMPTS", `${attempts.length} used`],
           ["VERIFICATION", `${criteria.filter((c) => c.passed).length} / ${criteria.length} passed`],
         ].map(([k, v]) => (
-          <div key={k} className="border-r border-white/5 px-4 py-3.5">
+          <div key={k} className="border-r border-white/8 px-4 py-3.5">
             <div className="font-mono text-[9.5px] font-medium tracking-[0.13em] text-ink-4">{k}</div>
             <div className="mt-1.5 font-mono text-[15px] text-ink">{v}</div>
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-2.5 border-t border-white/5 bg-[#0b0b0e] px-4 py-3">
+      <div className="flex items-center gap-2.5 border-t border-white/8 bg-panel px-4 py-3">
         <button
           type="button"
           data-testid="summary-open-terminal"
@@ -578,7 +617,7 @@ function SummaryCard({
         >
           Open session in terminal ↗
         </button>
-        <span className="ml-auto font-mono text-[10.5px] text-[#42424c]">
+        <span className="ml-auto font-mono text-[10.5px] text-[#6b6b77]">
           {checkpoint?.payload._tag === "CheckpointCreated"
             ? `checkpoint ${checkpoint.payload.checkpointId}`
             : ""}
@@ -608,7 +647,8 @@ export interface StreamProps {
   readonly busy: boolean
   readonly gateError: string | null
   readonly questionError: string | null
-  readonly treeToggle: ReactNode
+  /** Narrow viewports float the tree over the stream; this keeps the rows readable beside it. */
+  readonly insetForTree: boolean
 }
 
 export function Stream({
@@ -631,11 +671,10 @@ export function Stream({
   busy,
   gateError,
   questionError,
-  treeToggle,
+  insetForTree,
 }: StreamProps) {
   const list = useRef<VListHandle>(null)
   const [follow, setFollow] = useState(true)
-  const [wrap, setWrap] = useState(false)
   const { runStatus } = state
   const live = runStatus === "running" || runStatus === "created"
 
@@ -664,9 +703,11 @@ export function Stream({
   return (
     <section
       data-testid="stream"
-      className="relative flex min-w-[520px] flex-1 flex-col overflow-hidden rounded-xl border border-white/6 bg-panel"
+      className={`relative flex flex-1 flex-col overflow-hidden rounded-xl border border-white/9 bg-panel ${
+        insetForTree ? "mr-[352px] min-w-[380px]" : "min-w-[520px]"
+      }`}
     >
-      <div className="flex flex-none items-center gap-2.5 border-b border-white/6 bg-head px-3.5 py-2.5">
+      <div className="flex flex-none items-center gap-2.5 border-b border-white/9 bg-head px-3.5 py-2.5">
         <span
           className={`h-[9px] w-[9px] flex-none rounded-full border-2 ${dotColor} ${live ? "animate-ck-pulse" : ""}`}
         />
@@ -689,31 +730,11 @@ export function Stream({
           onClick={() => onModeChange(mode === "essential" ? "full" : "essential")}
           title="essential hides narration the tree and attempt header already carry"
           className={`flex-none rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
-            mode === "full" ? "border-white/18 text-[#c4c4ce]" : "border-white/7 text-[#55555f]"
+            mode === "full" ? "border-white/18 text-[#c4c4ce]" : "border-white/10 text-[#7e7e8a]"
           }`}
         >
           full log
         </button>
-        <button
-          type="button"
-          onClick={() => setWrap((w) => !w)}
-          className={`flex-none rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
-            wrap ? "border-white/18 text-[#c4c4ce]" : "border-white/7 text-[#55555f]"
-          }`}
-        >
-          wrap
-        </button>
-        <button
-          type="button"
-          data-testid="follow"
-          onClick={() => setFollow((f) => !f)}
-          className={`flex-none rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
-            follow ? "border-vio/30 bg-vio/8 text-vio-hi" : "border-white/7 text-[#55555f]"
-          }`}
-        >
-          follow
-        </button>
-        {treeToggle}
       </div>
 
       <div className="min-h-0 flex-1">
@@ -735,7 +756,6 @@ export function Stream({
                       open={open}
                       focused={focus === i}
                       live={live && isLast}
-                      wrap={wrap}
                       onToggle={() => {
                         onFocus(i)
                         onToggle(row.key)
@@ -746,14 +766,14 @@ export function Stream({
                   return (
                     <div
                       data-testid="attempt-header"
-                      className="mx-3.5 mt-3.5 mb-1.5 flex items-center gap-2.5 rounded-md border border-white/8 border-l-2 border-l-vio bg-white/2 px-3 py-2"
+                      className="mx-3.5 mt-3.5 mb-1.5 flex items-center gap-2.5 rounded-md border border-white/12 border-l-2 border-l-vio bg-white/2 px-3 py-2"
                     >
                       <span className="flex-none font-mono text-[11.5px] font-semibold text-[#c4c4ce]">
                         {row.title}
                       </span>
-                      <span className="truncate font-mono text-[11px] text-[#5c5c67]">{row.meta}</span>
+                      <span className="truncate font-mono text-[11px] text-[#87878f]">{row.meta}</span>
                       <div className="h-px min-w-3 flex-1 bg-white/6" />
-                      <span className="flex-none font-mono text-[10.5px] text-[#42424c]">
+                      <span className="flex-none font-mono text-[10.5px] text-[#6b6b77]">
                         {row.right}
                       </span>
                     </div>
@@ -777,6 +797,8 @@ export function Stream({
                       onAnswer={(a) => onAnswer(row.blockId, a)}
                     />
                   )
+                case "outcome":
+                  return <OutcomeCard row={row} focused={focus === i} />
                 case "banner":
                   return (
                     <div className="mx-3.5 my-2 flex items-center gap-2.5 rounded-lg border border-blue/25 bg-blue/6 px-3 py-2.5">

@@ -96,6 +96,11 @@ export class Journal extends Context.Tag("cockpit/Journal")<
     ) => Effect.Effect<void, JournalError>
     /** Re-opens a run the user asked to continue; only a marked-interrupted or failed one. */
     readonly resumeRun: (runId: RunId) => Effect.Effect<void, JournalError>
+    /**
+     * The one write no event narrates: the log an event would land in is what this erases. Insights
+     * stay — they aggregate across runs, and one of them outliving its evidence is the point.
+     */
+    readonly deleteRun: (runId: RunId) => Effect.Effect<void, JournalError>
 
     readonly startBlock: (input: StartBlockInput) => Effect.Effect<void, JournalError>
     readonly finishBlock: (
@@ -481,6 +486,27 @@ export const JournalLive = Layer.effect(
               UPDATE runs SET status = ${"running"}, finished_at = NULL WHERE id = ${runId}`
             return { runId, payload: { _tag: "RunResumed" } as const }
           }),
+        ),
+
+      // Children before parents: foreign keys are enforced, and one transaction so a failure
+      // half-way cannot leave a run whose rows outlive it. It shares the writers' semaphore
+      // because they share the connection a transaction is opened on.
+      deleteRun: (runId) =>
+        lock.withPermits(1)(
+          Effect.uninterruptible(
+            sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`DELETE FROM events WHERE run_id = ${runId}`
+                  yield* sql`DELETE FROM attempts WHERE run_id = ${runId}`
+                  yield* sql`DELETE FROM blocks WHERE run_id = ${runId}`
+                  yield* sql`DELETE FROM artifacts WHERE run_id = ${runId}`
+                  yield* sql`DELETE FROM checkpoints WHERE run_id = ${runId}`
+                  yield* sql`DELETE FROM runs WHERE id = ${runId}`
+                }),
+              )
+              .pipe(Effect.mapError(asJournalError("deleteRun"))),
+          ),
         ),
 
       startBlock: (input) =>

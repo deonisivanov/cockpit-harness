@@ -30,11 +30,11 @@ export function Insights({ source }: { source: Source }) {
     <>
       <section
         data-testid="insights"
-        className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/8 bg-panel"
+        className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/12 bg-panel"
       >
-        <div className="flex flex-none items-baseline gap-2.5 border-b border-white/6 bg-head px-3.5 py-2.5">
+        <div className="flex flex-none items-baseline gap-2.5 border-b border-white/9 bg-head px-3.5 py-2.5">
           <span className="font-mono text-[12px] font-semibold text-[#c4c4ce]">insights</span>
-          <span className="flex-1 font-mono text-[10.5px] text-[#42424c]">
+          <span className="flex-1 font-mono text-[10.5px] text-[#6b6b77]">
             what past runs say should change
           </span>
           {FILTERS.map((option) => (
@@ -46,7 +46,7 @@ export function Insights({ source }: { source: Source }) {
               className={`rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
                 filter === option
                   ? "border-vio/40 bg-vio/10 text-vio-hi"
-                  : "border-white/8 text-ink-4 hover:text-ink-2"
+                  : "border-white/12 text-ink-4 hover:text-ink-2"
               }`}
             >
               {option}
@@ -91,12 +91,12 @@ export function Insights({ source }: { source: Source }) {
                 {view.occurrences && (
                   <span
                     data-testid="insight-occurrences"
-                    className="flex-none rounded-xs border border-white/9 bg-white/4 px-1.5 py-px font-mono text-[10px] text-[#c4c4ce]"
+                    className="flex-none rounded-xs border border-white/13 bg-white/4 px-1.5 py-px font-mono text-[10px] text-[#c4c4ce]"
                   >
                     {view.occurrences}
                   </span>
                 )}
-                <span className="flex-none font-mono text-[10px] text-[#42424c]">
+                <span className="flex-none font-mono text-[10px] text-[#6b6b77]">
                   {view.lastSeen}
                 </span>
               </button>
@@ -116,9 +116,9 @@ function InsightDetail({ insight, onClose }: { insight: Insight; onClose: () => 
   return (
     <aside
       data-testid="insight-detail"
-      className="relative flex w-[440px] flex-none flex-col overflow-hidden rounded-xl border border-white/8 bg-panel"
+      className="relative flex w-[440px] flex-none flex-col overflow-hidden rounded-xl border border-white/12 bg-panel"
     >
-      <div className="flex flex-none items-baseline gap-2.5 border-b border-white/6 bg-head px-3.5 py-2.5">
+      <div className="flex flex-none items-baseline gap-2.5 border-b border-white/9 bg-head px-3.5 py-2.5">
         <span
           className={`flex-none rounded-xs border px-1.5 py-0.5 font-mono text-[9.5px] ${view.toneClass}`}
         >
@@ -147,7 +147,7 @@ function InsightDetail({ insight, onClose }: { insight: Insight; onClose: () => 
             {`raised ${insight.occurrences} time${insight.occurrences === 1 ? "" : "s"}`}
           </div>
           {view.runs.map((line) => (
-            <div key={line} className="font-mono text-[11px] text-[#5c5c67]">
+            <div key={line} className="font-mono text-[11px] text-[#87878f]">
               {line}
             </div>
           ))}
@@ -175,7 +175,7 @@ function InsightDetail({ insight, onClose }: { insight: Insight; onClose: () => 
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#55555f]">
+      <div className="mb-1.5 font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#7e7e8a]">
         {title}
       </div>
       <div className="space-y-0.5">{children}</div>

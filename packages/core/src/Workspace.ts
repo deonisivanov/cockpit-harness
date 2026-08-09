@@ -126,7 +126,15 @@ export class WorkspaceManager extends Context.Tag("cockpit/WorkspaceManager")<
       readonly commit: string
     }) => Effect.Effect<Workspace, WorkspaceError>
     readonly reconcile: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
-    readonly remove: (workspace: Workspace) => Effect.Effect<void, WorkspaceError>
+    readonly remove: (workspace: {
+      readonly repoPath: string
+      readonly path: string
+    }) => Effect.Effect<void, WorkspaceError>
+    /** `worktree remove` leaves the run's branch behind; deleting it is safe only once it has. */
+    readonly deleteBranch: (
+      repoPath: string,
+      branch: string,
+    ) => Effect.Effect<void, WorkspaceError>
     /** The repository root a path belongs to; fails when it is not one, which registration needs. */
     readonly resolveRepo: (repoPath: string) => Effect.Effect<string, WorkspaceError>
   }
@@ -227,6 +235,17 @@ export const WorkspaceManagerLive = Layer.effect(
           ),
           Effect.asVoid,
         ),
+
+      deleteBranch: (repoPath, branch) =>
+        // Force-deletion must not trust a DB value further than the runs this manager creates.
+        branch.startsWith("cockpit/")
+          ? Effect.asVoid(git("remove", repoPath, "branch", "-D", branch))
+          : Effect.fail(
+              new WorkspaceError({
+                op: "remove",
+                detail: `${branch} is not a cockpit-managed branch`,
+              }),
+            ),
     }
   }),
 )

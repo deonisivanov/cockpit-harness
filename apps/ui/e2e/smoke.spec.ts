@@ -19,6 +19,8 @@ test("boots with three panels and a populated stream", async ({ page }) => {
 
   const rows = page.getByTestId("event-row")
   await expect(rows.first()).toBeVisible()
+  // The stream follows its tail and the list is virtual; step to the top so early rows render.
+  await page.keyboard.press("k")
   await expect(rows.filter({ hasText: "rg -n reconnect" }).first()).toBeVisible()
   await expect(page.getByTestId("attempt-header").first()).toBeVisible()
 
@@ -295,7 +297,7 @@ test("a finished run closes with a summary card", async ({ page }) => {
 
 test("a cancelled run reports cancelled", async ({ page }) => {
   await page.goto("/?mock=cancelled")
-  await expect(page.getByTestId("summary-card").getByText(/cancelled/)).toBeVisible()
+  await expect(page.getByTestId("summary-card").getByText(/cancelled/).first()).toBeVisible()
 })
 
 test("the idle state offers a prompt box and recent runs", async ({ page }) => {

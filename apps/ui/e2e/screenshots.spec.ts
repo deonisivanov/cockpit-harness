@@ -73,8 +73,6 @@ shot(
 test("floating tree pane stays clear of the row's bottom edge", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 980 })
   await page.goto("/?mock=tree-long")
-  // Below 1280px the tree starts closed; the floating variant only renders once toggled open.
-  await page.getByTestId("tree-toggle").click()
   await expect(page.getByTestId("tree-node")).toHaveCount(40)
   await settle(page)
   const { paneBottom, rowBottom } = await page.evaluate(() => {

@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit"
 import { Terminal } from "@xterm/xterm"
 import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createOnigurumaEngine } from "shiki/engine/oniguruma"
-import { parseDiff, type DiffLine } from "./presentation.js"
+import { parseDiff, type DiffLine, type ProsePara } from "./presentation.js"
 
 type Lang = "typescript" | "javascript" | "json" | "bash" | "ruby" | "python"
 
@@ -61,7 +61,7 @@ export const Code = memo(function Code({ text, lang }: { text: string; lang: Lan
     }
   }, [text, lang])
 
-  const box = "rounded-md border border-white/6 bg-code px-3 py-2.5 overflow-x-auto font-mono text-[11.5px] leading-[1.75]"
+  const box = "rounded-md border border-white/9 bg-code px-3 py-2.5 overflow-x-auto font-mono text-[11.5px] leading-[1.75]"
   if (html) return <div className={box} dangerouslySetInnerHTML={{ __html: html }} />
   return (
     <pre className={`${box} text-ink-2 whitespace-pre`}>
@@ -71,9 +71,9 @@ export const Code = memo(function Code({ text, lang }: { text: string; lang: Lan
 })
 
 const TERM_THEME = {
-  background: "#040406",
+  background: "#0f0f16",
   foreground: "#8f8f9c",
-  cursor: "#040406",
+  cursor: "#0f0f16",
   black: "#2a2a32",
   red: "#cf6060",
   green: "#58a87c",
@@ -140,7 +140,7 @@ export const Ansi = memo(function Ansi({ text }: { text: string }) {
     <div
       ref={host}
       data-testid="ansi-terminal"
-      className="rounded-md border border-white/6 bg-term px-3 py-2.5"
+      className="rounded-md border border-white/9 bg-term px-3 py-2.5"
       style={{ height: rows * 17 + 20 }}
     />
   )
@@ -159,7 +159,7 @@ export const Diff = memo(function Diff({ text }: { text: string }) {
   return (
     <div
       data-testid="diff-view"
-      className="rounded-md border border-white/6 bg-code py-2.5 overflow-x-auto font-mono text-[11.5px] leading-[1.75]"
+      className="rounded-md border border-white/9 bg-code py-2.5 overflow-x-auto font-mono text-[11.5px] leading-[1.75]"
     >
       {lines.map((l, i) => (
         <div key={i} className={`px-3 whitespace-pre ${DIFF_STYLE[l.kind]}`}>
@@ -211,6 +211,52 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     </div>
   )
 })
+
+const PARA_STYLE: Record<ProsePara["kind"], string> = {
+  p: "font-sans text-[13.5px] leading-[1.72] text-[#c9c9d6] [text-wrap:pretty]",
+  b: "font-sans text-[12.5px] leading-[1.65] text-[#a8a8b6]",
+  k: "font-mono text-[11.5px] leading-[1.6] text-[#8f8f9c]",
+}
+
+export function ProseParas({ paras }: { paras: readonly ProsePara[] }) {
+  return (
+    <>
+      {paras.map((para, i) => (
+        <div key={i} className={PARA_STYLE[para.kind]}>
+          {para.kind === "b" ? `—  ${para.text}` : para.text}
+        </div>
+      ))}
+    </>
+  )
+}
+
+/** The green-tinted result box the reference uses inside expanded events. */
+export function ProseBox({ paras }: { paras: readonly ProsePara[] }) {
+  return (
+    <div
+      data-testid="prose-result"
+      className="flex flex-col gap-2 rounded-lg border border-white/10 border-l-2 border-l-green/45 bg-green/3 px-[15px] py-3"
+    >
+      <ProseParas
+        paras={paras.length > 0 ? paras : [{ kind: "p", text: "No textual result was reported." }]}
+      />
+    </div>
+  )
+}
+
+/** Raw payload JSON lives here and nowhere else — closed until someone asks for it. */
+export function RawSection({ value }: { value: unknown }) {
+  return (
+    <details data-testid="raw-section">
+      <summary className="cursor-pointer font-mono text-[9.5px] font-medium tracking-[0.13em] text-[#7e7e8a] select-none">
+        RAW
+      </summary>
+      <div className="mt-1.5">
+        <Code text={JSON.stringify(value, null, 2) ?? "null"} lang="json" />
+      </div>
+    </details>
+  )
+}
 
 /** One artifact body, rendered by the kind the daemon recorded for it. */
 export function ArtifactBodyView({ kind, path, text }: { kind: string; path: string; text: string }) {

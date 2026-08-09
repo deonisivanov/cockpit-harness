@@ -212,9 +212,17 @@ export interface WorkflowTree {
   readonly root: WorkflowNode
 }
 
+/** A file the user attached at creation; its body is served at `/api/artifacts/:id/raw`. */
+export interface RunAttachment {
+  readonly id: string
+  readonly name: string
+  readonly bytes: number
+}
+
 /** `tree` and `retryPolicies` arrive together, once the analyzer has settled on a plan. */
 export interface RunDetail {
   readonly run: Run
+  readonly attachments?: readonly RunAttachment[]
   readonly tree?: WorkflowTree
   /** Keyed by a Loop's `policy` verbatim — the Analyzer derives ids like `corrective@implement:5`. */
   readonly retryPolicies?: Readonly<Record<string, { readonly maxAttempts: number }>>

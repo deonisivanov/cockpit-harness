@@ -10,16 +10,28 @@ import type {
 } from "./model.js"
 import type { EventSource } from "./store.js"
 
+/** A file going up with `createRun`; the daemon stores it beside the run for the agent to read. */
+export interface NewAttachment {
+  readonly name: string
+  readonly contentBase64: string
+}
+
 export interface Source extends EventSource {
   projects(): Promise<readonly Project[]>
   createProject(name: string, repoPath: string): Promise<Project>
   runs(projectId: string): Promise<readonly Run[]>
   run(runId: string): Promise<RunDetail>
   /** Plans the run and stops; it executes only once `start` is called. */
-  createRun(projectId: string, prompt: string): Promise<{ runId: string }>
+  createRun(
+    projectId: string,
+    prompt: string,
+    attachments?: readonly NewAttachment[],
+  ): Promise<{ runId: string }>
   start(runId: string): Promise<void>
   /** Replans a waiting run; the tree it writes replaces the one on screen. */
   regenerate(runId: string): Promise<void>
+  /** Deletes the run and everything it owns — events, artifacts, worktree. Irreversible. */
+  deleteRun(runId: string): Promise<void>
   artifact(id: string): Promise<ArtifactBody>
   decideGate(runId: string, gateId: string, approved: boolean, note?: string): Promise<void>
   /** `stillPending` lets the retry loop give up as soon as the question is answered elsewhere. */
@@ -74,9 +86,16 @@ export const httpSource: Source = {
   createProject: (name, repoPath) => post<Project>("/projects", { name, repoPath }),
   runs: (projectId) => json<readonly Run[]>(`/projects/${projectId}/runs`),
   run: (runId) => json<RunDetail>(`/runs/${runId}`),
-  createRun: (projectId, prompt) => post<{ runId: string }>("/runs", { projectId, prompt }),
+  createRun: (projectId, prompt, attachments) =>
+    post<{ runId: string }>(
+      "/runs",
+      attachments === undefined || attachments.length === 0
+        ? { projectId, prompt }
+        : { projectId, prompt, attachments },
+    ),
   start: (runId) => post<void>(`/runs/${runId}/start`),
   regenerate: (runId) => post<void>(`/runs/${runId}/regenerate`),
+  deleteRun: (runId) => json<void>(`/runs/${runId}`, { method: "DELETE" }),
   decideGate: (runId, gateId, approved, note) =>
     post<void>(`/runs/${runId}/gates/${gateId}`, { approved, note }),
   cancel: (runId) => post<void>(`/runs/${runId}/cancel`),

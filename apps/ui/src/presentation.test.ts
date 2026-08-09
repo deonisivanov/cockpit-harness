@@ -227,11 +227,104 @@ describe("buildRows", () => {
       ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
       ev({ _tag: "RunStarted" }),
       ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
-      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
       ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.kind === "event" && rows[0].view.tag).toBe("session")
+  })
+
+  it("closes a finished block with an outcome card built from its own events", () => {
+    const rows = rowsOf(
+      ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+      ev(
+        { _tag: "ResultProduced", outputInline: { summary: "Mapped the reconnect path.", files: 0 } },
+        "explore",
+      ),
+      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+    )
+    const outcome = rows.find((r) => r.kind === "outcome")
+    expect(outcome?.kind === "outcome" && outcome.title).toBe("explore — finished")
+    expect(outcome?.kind === "outcome" && outcome.failed).toBe(false)
+    expect(outcome?.kind === "outcome" && outcome.paras).toContainEqual({
+      kind: "p",
+      text: "Mapped the reconnect path.",
+    })
+    expect(outcome?.kind === "outcome" && outcome.paras).toContainEqual({
+      kind: "k",
+      text: "files: 0",
+    })
+  })
+
+  it("falls back to the block's last assistant narration when the result carries no text", () => {
+    const rows = rowsOf(
+      ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+      ev(
+        { _tag: "OutputChunk", streamKind: "assistant", excerpt: "Traced the reconnect path." },
+        "explore",
+      ),
+      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+    )
+    const outcome = rows.find((r) => r.kind === "outcome")
+    expect(outcome?.kind === "outcome" && outcome.paras).toContainEqual({
+      kind: "p",
+      text: "Traced the reconnect path.",
+    })
+  })
+
+  it("marks a failed block's outcome with the error it raised", () => {
+    const rows = rowsOf(
+      ev({ _tag: "BlockStarted", defId: "verify", kind: "command" }, "verify"),
+      ev(
+        { _tag: "ErrorRaised", class: "semantic", signature: "spec", message: "1 example failed" },
+        "verify",
+      ),
+      ev({ _tag: "BlockFinished", status: "failed" }, "verify"),
+    )
+    const outcome = rows.find((r) => r.kind === "outcome")
+    expect(outcome?.kind === "outcome" && outcome.title).toBe("verify — failed")
+    expect(outcome?.kind === "outcome" && outcome.failed).toBe(true)
+    expect(outcome?.kind === "outcome" && outcome.paras).toContainEqual({
+      kind: "p",
+      text: "1 example failed",
+    })
+  })
+
+  it("keeps a block's outcome card visible when the stream is filtered to that block", () => {
+    const rows = rowsOf(
+      ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+      ev({ _tag: "BlockStarted", defId: "implement", kind: "agent" }, "implement"),
+    )
+    const filtered = filterRows(rows, "explore")
+    expect(filtered.some((r) => r.kind === "outcome")).toBe(true)
+  })
+
+  it("does not open a cancelled or failed summary with another block's success prose", () => {
+    const result = ev(
+      { _tag: "ResultProduced", outputInline: { summary: "Explore went fine." } },
+      "explore",
+    )
+    const cancelled = rowsOf(result, ev({ _tag: "RunCancelled" })).find((r) => r.kind === "summary")
+    expect(cancelled?.kind === "summary" && cancelled.paras[0]?.text).toMatch(/cancelled/)
+
+    const failed = rowsOf(
+      ev({ _tag: "ResultProduced", outputInline: { summary: "Explore went fine." } }, "explore"),
+      ev({ _tag: "ErrorRaised", class: "technical", signature: "x", message: "the daemon died" }),
+      ev({ _tag: "RunFinished", status: "failed" }),
+    ).find((r) => r.kind === "summary")
+    expect(failed?.kind === "summary" && failed.paras[0]?.text).toBe("the daemon died")
+  })
+
+  it("opens the summary card with prose from the run's last result", () => {
+    const rows = rowsOf(
+      ev({ _tag: "ResultProduced", outputInline: { summary: "The cursor now survives reconnects." } }, "finalize"),
+      ev({ _tag: "RunFinished", status: "succeeded" }),
+    )
+    const summary = rows.find((r) => r.kind === "summary")
+    expect(summary?.kind === "summary" && summary.paras[0]).toEqual({
+      kind: "p",
+      text: "The cursor now survives reconnects.",
+    })
   })
 
   it("keeps a question visible with the answer it received", () => {

@@ -334,6 +334,18 @@ function prelude(b: Builder): void {
     "at_ex1",
   )
   b.push({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "4 matches in 3 files", ref: "art_rg" }, "explore", "at_ex1")
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "The reconnect path is mapped and the cause identified: the transcript cursor is only persisted every 25 events, so a socket drop between flushes leaves the session pointing at an old position.",
+        findings: 4,
+      },
+    },
+    "explore",
+    "at_ex1",
+  )
   b.push({ _tag: "AttemptFinished", verdict: "success" }, "explore", "at_ex1")
   b.push({ _tag: "BlockFinished", status: "succeeded" }, "explore")
 
@@ -341,6 +353,17 @@ function prelude(b: Builder): void {
   b.push({ _tag: "AttemptStarted", number: 1, sessionId: "sess_a10c3f" }, "reproduce", "at_rp1")
   b.push(
     { _tag: "ArtifactCreated", artifactId: "art_repro", kind: "markdown", path: ARTIFACTS.art_repro!.path, bytes: 402 },
+    "reproduce",
+    "at_rp1",
+  )
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "The loss reproduces on demand: kill the websocket at event 28 and the transcript replays from event 25, dropping three lines. The failing sequence is recorded as a replayable script.",
+      },
+    },
     "reproduce",
     "at_rp1",
   )
@@ -362,6 +385,17 @@ function prelude(b: Builder): void {
   )
   b.push(
     { _tag: "ArtifactCreated", artifactId: "art_plan", kind: "markdown", path: ARTIFACTS.art_plan!.path, bytes: 812 },
+    "plan",
+    "at_pl1",
+  )
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "A 6-step plan is written: advance the cursor with every persisted event, clear the memoized value resume() reads, then prove it with a spec that kills the socket mid-stream. The public API of InterviewRecovery stays unchanged.",
+      },
+    },
     "plan",
     "at_pl1",
   )
@@ -442,7 +476,18 @@ function implementAttempt(
     attemptId,
   )
   if (pass) {
-    b.push({ _tag: "ResultProduced", outputRef: "art_result" }, "implement", attemptId)
+    b.push(
+      {
+        _tag: "ResultProduced",
+        outputRef: "art_result",
+        outputInline: {
+          summary:
+            "resume() now reloads the session before reading the cursor and no longer trusts a memoized value, so a reconnect resumes exactly at the last streamed event.",
+        },
+      },
+      "implement",
+      attemptId,
+    )
     b.push({ _tag: "AttemptFinished", verdict: "success" }, "implement", attemptId)
   } else {
     b.push(
@@ -562,12 +607,42 @@ function fixture(state: MockState): Fixture {
   implementAttempt(b, "at_im1", 1, "sess_31b0aa", "fail")
   implementAttempt(b, "at_im2", 2, "sess_9c14e2", "pass")
   b.push({ _tag: "BlockFinished", status: "succeeded" }, "implement")
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "All three checks passed: rspec 6 of 6, rubocop clean, and a replay of the recorded interview with no events lost or duplicated.",
+      },
+    },
+    "verify",
+  )
   b.push({ _tag: "BlockFinished", status: "succeeded" }, "verify")
   b.push({ _tag: "BlockSkipped", reason: "no visual surface touched" }, "visual-after")
   b.push({ _tag: "BlockStarted", defId: "local-duo-review", kind: "agent" }, "code-review")
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "Both reviewers approved: the read-path fix is correct, no offences on the changed files, no scope creep.",
+      },
+    },
+    "code-review",
+  )
   b.push({ _tag: "BlockFinished", status: "succeeded" }, "code-review")
   b.push({ _tag: "BlockStarted", defId: "finalize", kind: "agent" }, "finalize")
   b.push({ _tag: "CheckpointCreated", checkpointId: "b91d0f7", kind: "success" }, "finalize")
+  b.push(
+    {
+      _tag: "ResultProduced",
+      outputInline: {
+        summary:
+          "Interviews that lost their websocket mid-session used to come back missing the last transcript lines. The cursor is now written with every event and re-read fresh on reconnect, so a dropped connection resumes at the exact event it left off.",
+      },
+    },
+    "finalize",
+  )
   b.push({ _tag: "BlockFinished", status: "succeeded" }, "finalize")
   b.push({ _tag: "RunFinished", status: "succeeded" })
   return { events: b.events, status: "succeeded", streamFrom: b.events.length }
@@ -651,6 +726,7 @@ export function mockSource(state: MockState): Source {
   // Analyzing starts before planning settles: the first fetch has no tree, the refetch does.
   let planningSettled = state !== "analyzing"
   let projects = PROJECTS
+  const deleted = new Set<string>()
 
   return {
     projects: async () => projects,
@@ -659,8 +735,13 @@ export function mockSource(state: MockState): Source {
       projects = [...projects, created]
       return created
     },
-    runs: async () => (state === "idle" ? siblings.slice(1) : siblings),
-    run: async () => {
+    runs: async () =>
+      (state === "idle" ? siblings.slice(1) : siblings).filter((r) => !deleted.has(r.id)),
+    deleteRun: async (runId) => {
+      deleted.add(runId)
+    },
+    run: async (runId) => {
+      if (deleted.has(runId)) throw new Error(`GET /api/runs/${runId} → 404: run deleted`)
       if (!planningSettled) {
         planningSettled = true
         return { run }

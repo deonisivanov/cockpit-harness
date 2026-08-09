@@ -21,6 +21,7 @@ export interface RailProps {
   readonly runs: readonly Run[]
   readonly selectedRunId: string | null
   readonly onSelect: (runId: string) => void
+  readonly onDelete: (runId: string) => void
   readonly onNewTask: () => void
   readonly badge: string | null
   readonly activity: readonly { text: string; tone: string }[]
@@ -42,6 +43,7 @@ export function Rail({
   runs,
   selectedRunId,
   onSelect,
+  onDelete,
   onNewTask,
   badge,
   activity,
@@ -63,7 +65,7 @@ export function Rail({
   return (
     <aside
       data-testid="rail"
-      className={`${expanded ? "w-[272px]" : "w-[54px]"} flex flex-none flex-col overflow-hidden border-r border-white/6 bg-[#0a0a0d] transition-[width] duration-150`}
+      className={`${expanded ? "w-[272px]" : "w-[54px]"} flex flex-none flex-col overflow-hidden border-r border-white/9 bg-rail transition-[width] duration-150`}
     >
       <div className="flex items-center justify-between px-3.5 pt-3.5 pb-2.5">
         {expanded && (
@@ -119,7 +121,7 @@ export function Rail({
                   aria-label="select project"
                   value={project.id}
                   onChange={(e) => onSelectProject(e.target.value)}
-                  className="flex-1 truncate rounded-md border border-white/7 bg-[#101014] px-2.5 py-[7px] font-sans text-[12.5px] font-medium text-[#c4c4ce] outline-none hover:border-white/14 focus:border-vio/40"
+                  className="flex-1 truncate rounded-md border border-white/10 bg-[#101014] px-2.5 py-[7px] font-sans text-[12.5px] font-medium text-[#c4c4ce] outline-none hover:border-white/14 focus:border-vio/40"
                 >
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -137,7 +139,7 @@ export function Rail({
                   className={`flex-none rounded-md border px-2 py-[7px] font-mono text-[11px] ${
                     addProjectOpen
                       ? "border-vio/40 bg-vio/10 text-vio-hi"
-                      : "border-white/7 text-ink-4 hover:border-vio/40 hover:text-vio-hi"
+                      : "border-white/10 text-ink-4 hover:border-vio/40 hover:text-vio-hi"
                   }`}
                 >
                   +
@@ -164,39 +166,53 @@ export function Rail({
               const selected = r.id === selectedRunId
               const b = badged(r)
               return (
-                <button
+                <div
                   key={r.id}
-                  type="button"
-                  data-testid="rail-task"
-                  onClick={() => onSelect(r.id)}
-                  className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left font-sans text-[12.5px] ${
+                  className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 font-sans text-[12.5px] ${
                     selected
-                      ? "border-white/8 bg-white/4 text-[#dcdce6]"
+                      ? "border-white/12 bg-white/4 text-[#dcdce6]"
                       : "border-transparent text-[#8a8a96] hover:bg-white/3"
                   }`}
                 >
-                  <span className={`w-3 flex-none text-[9px] ${DOT[r.status].className}`}>
-                    {DOT[r.status].glyph}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{r.prompt}</span>
-                  {b && (
-                    <span className="flex-none rounded-xs border border-amber/40 bg-amber/8 px-1.5 py-0.5 font-mono text-[9px] text-amber">
-                      {b}
+                  <button
+                    type="button"
+                    data-testid="rail-task"
+                    onClick={() => onSelect(r.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    <span className={`w-3 flex-none text-[9px] ${DOT[r.status].className}`}>
+                      {DOT[r.status].glyph}
                     </span>
-                  )}
-                  <span className="flex-none font-mono text-[10px] text-[#42424c]">
-                    {relativeTime(r.createdAt)}
-                  </span>
-                </button>
+                    <span className="min-w-0 flex-1 truncate">{r.prompt}</span>
+                    {b && (
+                      <span className="flex-none rounded-xs border border-amber/40 bg-amber/8 px-1.5 py-0.5 font-mono text-[9px] text-amber">
+                        {b}
+                      </span>
+                    )}
+                    <span className="flex-none font-mono text-[10px] text-[#6b6b77]">
+                      {relativeTime(r.createdAt)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="delete-task"
+                    title="delete task"
+                    aria-label={`delete ${r.prompt}`}
+                    onClick={() => onDelete(r.id)}
+                    className="flex h-[17px] w-[17px] flex-none items-center justify-center rounded-xs font-mono text-[10px] text-[#666672] hover:bg-red/14 hover:text-red"
+                  >
+                    ✕
+                  </button>
+                </div>
               )
             })}
           </div>
 
-          <div className="border-t border-white/5 px-3 py-2.5">
+          <div className="border-t border-white/8 px-3 py-2.5">
             <button
               type="button"
               onClick={onNewTask}
-              className="w-full rounded-md border border-dashed border-white/11 px-2.5 py-2 text-center font-sans text-[12px] font-medium text-[#7a7a86] hover:border-vio/40 hover:text-vio-hi"
+              className="w-full rounded-md border border-dashed border-white/15 px-2.5 py-2 text-center font-sans text-[12px] font-medium text-[#7a7a86] hover:border-vio/40 hover:text-vio-hi"
             >
               + new task
             </button>
@@ -215,13 +231,13 @@ export function Rail({
           </div>
 
           <div className="px-3.5 pb-3">
-            <div className="py-2 font-mono text-[9px] font-medium tracking-[0.14em] text-[#3f3f49]">
+            <div className="py-2 font-mono text-[9px] font-medium tracking-[0.14em] text-[#666672]">
               ACTIVITY
             </div>
             {activity.map((a, i) => (
               <div
                 key={i}
-                className="flex items-baseline gap-[7px] py-[3px] font-sans text-[11px] leading-[1.45] text-[#5c5c67]"
+                className="flex items-baseline gap-[7px] py-[3px] font-sans text-[11px] leading-[1.45] text-[#87878f]"
               >
                 <span className={`flex-none text-[7px] ${a.tone}`}>●</span>
                 <span className="min-w-0 flex-1 truncate">{a.text}</span>
@@ -252,7 +268,7 @@ function AddProjectForm({
   return (
     <form
       data-testid="add-project-form"
-      className="mx-3 mb-2.5 flex flex-col gap-1.5 rounded-md border border-white/8 bg-[#101014] p-2.5"
+      className="mx-3 mb-2.5 flex flex-col gap-1.5 rounded-md border border-white/12 bg-[#101014] p-2.5"
       onSubmit={(e) => {
         e.preventDefault()
         if (!name.trim() || !repoPath.trim()) return
@@ -270,7 +286,7 @@ function AddProjectForm({
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="name"
-        className="rounded-sm border border-white/8 bg-[#0a0a0d] px-2 py-1.5 font-sans text-[12px] text-[#c9c9d4] outline-none placeholder:text-[#5c5c67] focus:border-vio/40"
+        className="rounded-sm border border-white/12 bg-[#101014] px-2 py-1.5 font-sans text-[12px] text-[#c9c9d4] outline-none placeholder:text-[#87878f] focus:border-vio/40"
       />
       <input
         data-testid="add-project-path"
@@ -283,7 +299,7 @@ function AddProjectForm({
           setPathError(null)
         }}
         placeholder="/Users/you/path/to/repo"
-        className="rounded-sm border border-white/8 bg-[#0a0a0d] px-2 py-1.5 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#5c5c67] focus:border-vio/40"
+        className="rounded-sm border border-white/12 bg-[#101014] px-2 py-1.5 font-mono text-[11.5px] text-[#c9c9d4] outline-none placeholder:text-[#87878f] focus:border-vio/40"
       />
       <button
         type="submit"

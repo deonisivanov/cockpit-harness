@@ -257,6 +257,16 @@ type EventPayload =
   | OutputChunk { streamKind: "stdout" | "stderr" | "assistant"; excerpt; ref }  // raw output lives in artifacts
 ```
 
+### Run deletion
+
+`DELETE /api/runs/:id` erases a run and everything it owns: journal events, block and attempt rows,
+artifact rows and files, checkpoints, the run directory, the worktree and the `cockpit/run-*`
+branch (both best-effort — git refusing does not keep the run), and the run row itself, in one
+transaction, children before parents. A run this daemon is executing is interrupted first, and the
+row deletion happens before the filesystem cleanup so a failure leaves a whole, resumable run
+rather than a row whose evidence is gone. Insights survive — they aggregate across runs. There is
+no undelete.
+
 ### Run re-entry (settled in Phase 9)
 
 `POST /api/runs/:id/resume` takes an `interrupted` or `failed` run and carries it on; anything else
@@ -343,7 +353,7 @@ template fail at its first block. `attempts` carries `run_id` for the composite 
 also drops the join every attempt read previously needed to learn which run it belonged to. Attempts
 are addressed under their run: `GET /api/runs/:id/blocks/:blockId/attempts`.
 
-Run artifacts (prompts, transcripts, long output, packets, briefs) are files under `~/.cockpit/runs/<runId>/`, addressed by `artifacts` rows. The DB stores references and compact JSON only.
+Run artifacts (prompts, transcripts, long output, packets, briefs, user attachments) are files under `~/.cockpit/runs/<runId>/`, addressed by `artifacts` rows. The DB stores references and compact JSON only. Attachments uploaded at creation are rows of kind `attachment` (binary allowed, served raw without the text byte cap); the run's stored prompt never embeds them — their paths are appended only on the copy handed to the analyzer and engine.
 
 ## 11. Cartridge API surface (`packages/cartridge-kit`)
 

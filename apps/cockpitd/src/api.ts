@@ -18,7 +18,7 @@ import {
 } from "@cockpit/core"
 import { Chunk, Effect, Fiber, Schema, Stream } from "effect"
 import * as NodePath from "node:path"
-import { plannedTree, RunSupervisor, treeArtifactKind } from "./runs.js"
+import { attachmentArtifactKind, plannedTree, RunSupervisor, treeArtifactKind } from "./runs.js"
 
 const loopbackNames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"])
 
@@ -46,7 +46,61 @@ const heartbeat = JSON.stringify({ type: "ping" })
 
 const NonEmpty = Schema.String.pipe(Schema.minLength(1))
 const CreateProject = Schema.Struct({ name: NonEmpty, repoPath: NonEmpty })
-const CreateRun = Schema.Struct({ projectId: NonEmpty, prompt: NonEmpty })
+const CreateRun = Schema.Struct({
+  projectId: NonEmpty,
+  prompt: NonEmpty,
+  attachments: Schema.optional(
+    Schema.Array(Schema.Struct({ name: NonEmpty, contentBase64: NonEmpty })),
+  ),
+})
+
+const maxAttachments = 10
+const maxAttachmentBytes = 10 * 1024 * 1024
+const maxAttachmentsTotalBytes = 25 * 1024 * 1024
+const maxAttachmentNameChars = 200
+// Base64 inflates by 4/3; checked on the string so the cap bounds the allocation, not just the file.
+const maxAttachmentBase64Chars = Math.ceil(maxAttachmentBytes / 3) * 4
+// Buffer.from(s, "base64") silently swallows garbage, so the shape is checked before decoding.
+const base64Shape = /^[A-Za-z0-9+/]+={0,2}$/
+
+type DecodedAttachments =
+  | { readonly ok: ReadonlyArray<{ readonly name: string; readonly content: Uint8Array }> }
+  | { readonly reject: string }
+
+const decodeAttachments = (
+  items: ReadonlyArray<{ readonly name: string; readonly contentBase64: string }>,
+): DecodedAttachments => {
+  if (items.length > maxAttachments) {
+    return { reject: `at most ${maxAttachments} attachments are accepted` }
+  }
+  const decoded: Array<{ name: string; content: Uint8Array }> = []
+  let total = 0
+  for (const item of items) {
+    const name = NodePath.basename(item.name.replaceAll("\\", "/"))
+    if (name === "" || name === "." || name === "..") {
+      return { reject: `attachment name ${JSON.stringify(item.name)} is not a file name` }
+    }
+    if (name.length > maxAttachmentNameChars) {
+      return { reject: `attachment name is over ${maxAttachmentNameChars} characters` }
+    }
+    if (item.contentBase64.length > maxAttachmentBase64Chars) {
+      return { reject: `attachment ${name} is over the ${maxAttachmentBytes} byte limit` }
+    }
+    if (item.contentBase64.length % 4 !== 0 || !base64Shape.test(item.contentBase64)) {
+      return { reject: `attachment ${name} is not valid base64` }
+    }
+    const content = Buffer.from(item.contentBase64, "base64")
+    if (content.byteLength > maxAttachmentBytes) {
+      return { reject: `attachment ${name} is over the ${maxAttachmentBytes} byte limit` }
+    }
+    total += content.byteLength
+    if (total > maxAttachmentsTotalBytes) {
+      return { reject: `attachments exceed the ${maxAttachmentsTotalBytes} byte total limit` }
+    }
+    decoded.push({ name, content })
+  }
+  return { ok: decoded }
+}
 const GateDecision = Schema.Struct({
   approved: Schema.Boolean,
   note: Schema.optional(Schema.String),
@@ -128,8 +182,15 @@ const getRun = Effect.gen(function* () {
   const artifact = yield* store.latestArtifact(runId, treeArtifactKind)
   // Absent until planning has settled on a tree; the run is `created` until then.
   const planned = artifact === undefined ? undefined : yield* plannedTree(artifact.path)
+  const attachments = yield* store.artifacts(runId, attachmentArtifactKind)
   return yield* ok({
     run,
+    // The stored file is `<artifactId>-<name>`; the id prefix comes back off for display.
+    attachments: attachments.map((row) => ({
+      id: row.id,
+      name: NodePath.basename(row.path).slice(row.id.length + 1),
+      bytes: row.bytes,
+    })),
     tree: planned?.tree,
     retryPolicies:
       planned === undefined
@@ -149,7 +210,15 @@ const createRun = Effect.gen(function* () {
   if (project === undefined) {
     return yield* problem(404, "not found", `project ${body.projectId}`)
   }
-  const runId = yield* supervisor.create({ project, prompt: body.prompt })
+  const attachments = decodeAttachments(body.attachments ?? [])
+  if ("reject" in attachments) {
+    return yield* problem(400, "invalid request", attachments.reject)
+  }
+  const runId = yield* supervisor.create({
+    project,
+    prompt: body.prompt,
+    attachments: attachments.ok,
+  })
   return yield* ok({ runId }, 202)
 })
 
@@ -251,6 +320,16 @@ const endRun = (intent: "cancel" | "stop") =>
           `run ${runId} is ${run.status} and is not owned by this daemon process`,
         )
   })
+
+const deleteRun = Effect.gen(function* () {
+  const store = yield* Store
+  const supervisor = yield* RunSupervisor
+  const runId = RunId.make(yield* pathParam("id"))
+  const run = yield* store.run(runId)
+  if (run === undefined) return yield* problem(404, "not found", `run ${runId}`)
+  yield* supervisor.delete(runId)
+  return yield* ok({ ok: true })
+})
 
 const skipBlock = Effect.gen(function* () {
   const supervisor = yield* RunSupervisor
@@ -377,7 +456,8 @@ const getArtifactRaw = Effect.gen(function* () {
   if (artifact === undefined) {
     return yield* problem(404, "not found", `artifact ${artifactId}`)
   }
-  if (artifact.bytes > outputBudget) {
+  // Attachments were already capped at intake, and an image is routinely over the text budget.
+  if (artifact.kind !== attachmentArtifactKind && artifact.bytes > outputBudget) {
     return yield* problem(
       413,
       "artifact too large",
@@ -385,13 +465,20 @@ const getArtifactRaw = Effect.gen(function* () {
     )
   }
   // The platform infers the type from the extension and falls back to a download; a transcript or
-  // a log is text, and only an explicit header says so.
-  return yield* HttpServerResponse.file(
-    artifact.path,
-    asText.has(NodePath.extname(artifact.path))
-      ? { headers: { "content-type": "text/plain; charset=utf-8" } }
-      : undefined,
-  )
+  // a log is text, and only an explicit header says so. User-supplied bytes must never execute on
+  // this origin (an attached .svg or .html would otherwise script against the unauthenticated
+  // API), so an attachment downloads on navigation; subresource loads like <img> ignore the
+  // disposition and still render inline.
+  return yield* HttpServerResponse.file(artifact.path, {
+    headers: {
+      "x-content-type-options": "nosniff",
+      ...(artifact.kind === attachmentArtifactKind
+        ? { "content-disposition": "attachment" }
+        : asText.has(NodePath.extname(artifact.path))
+          ? { "content-type": "text/plain; charset=utf-8" }
+          : {}),
+    },
+  })
 })
 
 /** Backfill from the client's cursor, then live: contracts §9, and reconnect is a new cursor. */
@@ -477,6 +564,7 @@ export const apiRoutes = (
     yield* router.get("/api/projects/:id/runs", route(respond(listRuns)))
     yield* router.post("/api/runs", route(respond(createRun)))
     yield* router.get("/api/runs/:id", route(respond(getRun)))
+    yield* router.del("/api/runs/:id", route(respond(deleteRun)))
     yield* router.post("/api/runs/:id/start", route(respond(waitingRun("start"))))
     yield* router.post("/api/runs/:id/regenerate", route(respond(waitingRun("regenerate"))))
     yield* router.get("/api/runs/:id/events", route(respond(runEvents)))

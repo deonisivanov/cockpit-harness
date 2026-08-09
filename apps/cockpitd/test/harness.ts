@@ -114,9 +114,10 @@ export interface Api {
     path: string,
     body?: unknown,
   ) => Effect.Effect<Response, unknown, HttpClient.HttpClient>
+  readonly del: (path: string) => Effect.Effect<Response, unknown, HttpClient.HttpClient>
 }
 
-const send = (method: "GET" | "POST", path: string, body?: unknown) =>
+const send = (method: "GET" | "POST" | "DELETE", path: string, body?: unknown) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
     const base = HttpClientRequest.make(method)(path)
@@ -132,6 +133,7 @@ const send = (method: "GET" | "POST", path: string, body?: unknown) =>
 export const api: Api = {
   get: (path) => send("GET", path),
   post: (path, body) => send("POST", path, body),
+  del: (path) => send("DELETE", path),
 }
 
 export const json = <T = unknown>(response: Response): T => JSON.parse(response.body) as T

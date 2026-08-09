@@ -84,8 +84,8 @@ interrupted runs are closed straight through the journal. Any other failure beco
 | `GET /api/projects` | Registered projects |
 | `POST /api/projects` | Register `{name, repoPath}`; the git *root* is stored, 400 if not a repo |
 | `GET /api/projects/:id/runs` | Runs of a project, newest first |
-| `POST /api/runs` | Plan `{projectId, prompt}` → `202 {runId}`; the run stops at `awaiting-start` |
-| `GET /api/runs/:id` | Run row + executed tree + per-policy `maxAttempts` + block rows |
+| `POST /api/runs` | Plan `{projectId, prompt, attachments?}` → `202 {runId}`; the run stops at `awaiting-start`. Attachments are `{name, contentBase64}[]` (≤10 files, ≤10 MiB each, ≤25 MiB total), stored as `attachment` artifacts in the run directory; the agent prompt lists their paths, the stored prompt stays as typed. A future link attachment (e.g. a Jira issue via an MCP plugin) becomes its own artifact kind beside `attachment`. |
+| `GET /api/runs/:id` | Run row + `attachments` (`{id, name, bytes}[]`) + executed tree + per-policy `maxAttempts` + block rows |
 | `POST /api/runs/:id/start` | Execute the workflow it is holding; `202`, 409 unless `awaiting-start` |
 | `POST /api/runs/:id/regenerate` | Plan again, replacing the workflow; `202`, 409 unless `awaiting-start` |
 | `GET /api/runs/:id/events` | Journal page: `?from=<seq>&limit=<n>` (default 1000, max 5000) |
@@ -97,6 +97,7 @@ interrupted runs are closed straight through the journal. Any other failure beco
 | `POST /api/runs/:id/terminal` | Open or resume the canonical session; 502 on a terminal failure |
 | `POST /api/runs/:id/retrospective` | 409 while the run is `created`, `awaiting-start` or `running` |
 | `POST /api/runs/:id/resume` | Re-enter; `202 {runId}`, 409 unless `interrupted` or `failed`, 404 unknown |
+| `DELETE /api/runs/:id` | Erase the run entirely — journal rows, artifacts, worktree, branch; interrupts a live one first. `{ok: true}`, 404 unknown |
 | `GET /api/insights` | `?target=core\|cartridge&limit&offset` |
 | `GET /api/insights/:id` | One insight |
 | `GET /api/runs/:id/blocks/:blockId/attempts` | Attempts of a block instance |

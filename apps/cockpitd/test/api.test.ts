@@ -1,6 +1,8 @@
 import { correctivePolicy, JournalEvent, ProjectRow, RunRow, WorkflowTree } from "@cockpit/core"
 import { Effect, Schedule } from "effect"
-import { existsSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { existsSync, readFileSync, rmSync } from "node:fs"
+import * as NodePath from "node:path"
 import { expect, it } from "vitest"
 import {
   Api,
@@ -271,6 +273,7 @@ const detailOf = (client: Api, runId: string) =>
     client.get(`/api/runs/${runId}`),
     json<{
       run: RunRow
+      attachments?: ReadonlyArray<{ id: string; name: string; bytes: number }>
       tree?: WorkflowTree
       blocks: ReadonlyArray<{ id: string }>
     }>,
@@ -866,6 +869,215 @@ it(
     )
 
     expect(spawnedArgv("analyzer").join(" ")).toContain("--model opus")
+  },
+  2 * minutes,
+)
+
+it(
+  "stores attachments at creation, lists them, serves them raw, and shows the agent their paths",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix") })
+    const repoPath = makeRepo()
+    // Big enough to prove attachments escape the text-artifact byte budget.
+    const image = new Uint8Array(1_500_000).fill(0x42)
+    image.set([0x89, 0x50, 0x4e, 0x47])
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const created = yield* client.post("/api/runs", {
+          projectId: project.id,
+          prompt: "use the attached screenshot",
+          attachments: [
+            { name: "shot.png", contentBase64: Buffer.from(image).toString("base64") },
+            { name: "notes.md", contentBase64: Buffer.from("# notes").toString("base64") },
+          ],
+        })
+        if (created.status !== 202) {
+          throw new Error(`create failed: ${created.status} ${created.body}`)
+        }
+        const { runId } = json<{ runId: string }>(created)
+        yield* waitFor(runId, (found) => tagged(found, "RunAwaitingStart").length > 0)
+        const detail = yield* detailOf(client, runId)
+        const attachments = detail.attachments!
+        const shot = attachments.find((entry) => entry.name === "shot.png")!
+        const raw = yield* client.get(`/api/artifacts/${shot.id}/raw`)
+        const row = yield* Effect.map(
+          client.get(`/api/artifacts/${shot.id}`),
+          json<{ path: string }>,
+        )
+        return { attachments, created, prompt: detail.run.prompt, raw, row }
+      }),
+    )
+
+    expect(result.created.status).toBe(202)
+    // The stored prompt is exactly what was typed; paths ride only on the agent's copy.
+    expect(result.prompt).toBe("use the attached screenshot")
+    expect(result.attachments.map((entry) => entry.name).sort()).toEqual([
+      "notes.md",
+      "shot.png",
+    ])
+    expect(result.raw.status).toBe(200)
+    expect(result.raw.headers["content-type"]).toContain("image/png")
+    // User bytes must never execute on this origin: navigation downloads, <img> still renders.
+    expect(result.raw.headers["content-disposition"]).toBe("attachment")
+    expect(new Uint8Array(readFileSync(result.row.path))).toEqual(image)
+    // The analyzer's prompt operand names the stored path, so the agent can read the file.
+    const operand = spawnedArgv("analyzer").at(-1)!
+    expect(operand).toContain("use the attached screenshot")
+    expect(operand).toContain(result.row.path)
+  },
+  2 * minutes,
+)
+
+it("reports nothing to delete for a run that does not exist", async () => {
+  const answer = await withApi((client) => client.del("/api/runs/no-such-run"))
+
+  expect(answer.status).toBe(404)
+  expect(json<{ error: string }>(answer).error).toBe("not found")
+})
+
+it(
+  "deletes a finished run: its rows, its events, its files, its worktree and its branch",
+  async () => {
+    writeScript({
+      analyzer: chooses("quickfix"),
+      "agent-task": succeeds,
+      "verify-output": verifies,
+    })
+    const repoPath = makeRepo()
+    const home = tempDir("cockpitd-delete-home-")
+    const hasRunBranch = () =>
+      execFileSync("git", ["branch", "--list", "cockpit/run-*"], {
+        cwd: repoPath,
+        encoding: "utf8",
+      }).trim() !== ""
+
+    const result = await withApi(
+      (client) =>
+        Effect.gen(function* () {
+          const project = yield* register(client, repoPath)
+          const { runId } = yield* startRun(client, project.id, "small fix")
+          yield* waitFor(runId, finished)
+
+          const worktree = (yield* detailOf(client, runId)).run.worktreePath as string
+          const files = NodePath.join(home, "runs", runId)
+          const before = {
+            branch: hasRunBranch(),
+            files: existsSync(files),
+            worktree: existsSync(worktree),
+          }
+          const deleted = yield* client.del(`/api/runs/${runId}`)
+
+          return {
+            before,
+            deleted,
+            detail: yield* client.get(`/api/runs/${runId}`),
+            events: yield* events(runId),
+            runs: yield* Effect.map(
+              client.get(`/api/projects/${project.id}/runs`),
+              json<ReadonlyArray<RunRow>>,
+            ),
+            after: {
+              branch: hasRunBranch(),
+              files: existsSync(files),
+              worktree: existsSync(worktree),
+            },
+          }
+        }),
+      { COCKPIT_HOME: home },
+    )
+
+    // Everything the assertions below claim is gone was there a moment earlier.
+    expect(result.before).toEqual({ branch: true, files: true, worktree: true })
+    expect(result.deleted.status).toBe(200)
+    expect(result.detail.status).toBe(404)
+    expect(result.events).toEqual([])
+    expect(result.runs).toHaveLength(0)
+    expect(result.after).toEqual({ branch: false, files: false, worktree: false })
+  },
+  2 * minutes,
+)
+
+it(
+  "deletes a run this daemon is still executing, interrupting it first",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix"), "agent-task": { hang: true } })
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* startRun(client, project.id, "hang forever")
+        yield* waitFor(runId, (found) => tagged(found, "AttemptStarted").length > 0)
+
+        const worktree = (yield* detailOf(client, runId)).run.worktreePath as string
+        const deleted = yield* client.del(`/api/runs/${runId}`)
+        return {
+          deleted,
+          detail: yield* client.get(`/api/runs/${runId}`),
+          // The interrupt is awaited, so the cancel it triggers cannot land after the rows go.
+          events: yield* events(runId),
+          worktree: existsSync(worktree),
+        }
+      }),
+    )
+
+    expect(result.deleted.status).toBe(200)
+    expect(result.detail.status).toBe(404)
+    expect(result.events).toEqual([])
+    expect(result.worktree).toBe(false)
+  },
+  2 * minutes,
+)
+
+it(
+  "rejects attachments that break the caps and leaves no run behind",
+  async () => {
+    const repoPath = makeRepo()
+
+    const result = await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const post = (attachments: unknown) =>
+          client.post("/api/runs", { projectId: project.id, prompt: "capped", attachments })
+        const oversize = yield* post([
+          {
+            name: "big.bin",
+            contentBase64: Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64"),
+          },
+        ])
+        const garbage = yield* post([{ name: "bad.png", contentBase64: "not base64!!!" }])
+        const dotted = yield* post([{ name: "..", contentBase64: "aGk=" }])
+        const crowd = yield* post(
+          Array.from({ length: 11 }, (_, index) => ({
+            name: `file-${index}.txt`,
+            contentBase64: "aGk=",
+          })),
+        )
+        const nine = Buffer.alloc(9 * 1024 * 1024).toString("base64")
+        const bulky = yield* post(
+          Array.from({ length: 3 }, (_, index) => ({
+            name: `chunk-${index}.bin`,
+            contentBase64: nine,
+          })),
+        )
+        const longName = yield* post([{ name: `${"a".repeat(201)}.txt`, contentBase64: "aGk=" }])
+        const runs = yield* Effect.map(
+          client.get(`/api/projects/${project.id}/runs`),
+          json<ReadonlyArray<RunRow>>,
+        )
+        return { bulky, crowd, dotted, garbage, longName, oversize, runs }
+      }),
+    )
+
+    expect(result.oversize.status).toBe(400)
+    expect(result.garbage.status).toBe(400)
+    expect(result.dotted.status).toBe(400)
+    expect(result.crowd.status).toBe(400)
+    expect(result.bulky.status).toBe(400)
+    expect(result.longName.status).toBe(400)
+    expect(result.runs).toHaveLength(0)
   },
   2 * minutes,
 )

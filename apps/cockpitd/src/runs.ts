@@ -49,6 +49,13 @@ import * as NodePath from "node:path"
 /** Where a run's executed tree is kept, so a client can read it back without replaying the log. */
 export const treeArtifactKind = "workflow-tree"
 
+/**
+ * Files the user attached at creation, stored in the run directory the providers already reach
+ * via --add-dir. A future link-type attachment (e.g. a Jira issue fed through an MCP plugin)
+ * becomes its own kind beside this one rather than a variant of it.
+ */
+export const attachmentArtifactKind = "attachment"
+
 const PlannedTree = Schema.Struct({
   tree: Schema.Struct({ runId: RunId, templateId: Schema.String, root: WorkflowNode }),
   policies: Schema.Array(RetryPolicy),
@@ -108,6 +115,10 @@ export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
     readonly create: (input: {
       readonly project: ProjectRow
       readonly prompt: string
+      readonly attachments?: ReadonlyArray<{
+        readonly name: string
+        readonly content: Uint8Array
+      }>
     }) => Effect.Effect<RunId, WorkspaceError | JournalError>
     /** Executes the tree a waiting run has been holding, read back off its artifact. */
     readonly start: (runId: RunId) => Effect.Effect<void, JournalError>
@@ -124,6 +135,8 @@ export class RunSupervisor extends Context.Tag("cockpitd/RunSupervisor")<
     readonly cancel: (runId: RunId) => Effect.Effect<boolean, JournalError>
     /** Like cancel, but the run closes as interrupted and stays resumable. */
     readonly stop: (runId: RunId) => Effect.Effect<boolean>
+    /** Erases the run: the fiber here holding it, its worktree, its branch, its files, its rows. */
+    readonly delete: (runId: RunId) => Effect.Effect<void, JournalError>
     /**
      * Records a request to skip a node's next visit, refused when the tree would stop validating
      * without it. The request is durable; a live run also learns of it immediately.
@@ -197,6 +210,19 @@ export const RunSupervisorLive = Layer.scoped(
       ]
     })
 
+    /**
+     * The stored prompt stays exactly what the user typed; the paths ride along only when the
+     * text goes to an agent, so a replan or resume rebuilds them from the artifacts rows.
+     */
+    const withAttachments = (runId: RunId, prompt: string) =>
+      Effect.map(store.artifacts(runId, attachmentArtifactKind), (rows) =>
+        rows.length === 0
+          ? prompt
+          : `${prompt}\n\nAttached files (read them from these paths):\n${rows
+              .map((row) => `- ${row.path}`)
+              .join("\n")}`,
+      )
+
     /** Analyzer → transforms → the durable tree, which is all a Regenerate has to do again. */
     const planTree = (input: {
       readonly runId: RunId
@@ -205,7 +231,8 @@ export const RunSupervisorLive = Layer.scoped(
       readonly cwd: string
     }) =>
       Effect.gen(function* () {
-        const { cwd, project, prompt, runId } = input
+        const { cwd, project, runId } = input
+        const prompt = yield* withAttachments(runId, input.prompt)
         const cartridge = yield* cartridgeFor(project.repoPath)
         const registry = yield* buildRegistry(cartridge?.config)
         const rules = cartridge?.config.rules ?? {}
@@ -307,6 +334,30 @@ export const RunSupervisorLive = Layer.scoped(
       })
 
     /**
+     * What a deleted run leaves in git. Each half is best-effort on purpose: a worktree the user
+     * already removed, or a branch they checked out elsewhere, is not a reason to keep the run.
+     */
+    const discardWorkspace = (run: RunRow) =>
+      Effect.gen(function* () {
+        const project = yield* store.project(run.projectId)
+        if (project === undefined) return
+        if (run.worktreePath !== null) {
+          yield* Effect.ignoreLogged(
+            workspaces.remove({ repoPath: project.repoPath, path: run.worktreePath }),
+          )
+          // A worktree git would not release (locked, repo moved) must still leave the disk: the
+          // run row it belonged to is about to go, and an orphan dir would have no handle left.
+          yield* Effect.ignoreLogged(
+            fs.remove(run.worktreePath, { recursive: true, force: true }),
+          )
+        }
+        // After the worktree, never before: git refuses to delete a branch a worktree holds.
+        if (run.branch !== null) {
+          yield* Effect.ignoreLogged(workspaces.deleteBranch(project.repoPath, run.branch))
+        }
+      })
+
+    /**
      * The blocks come from the cartridge as it stands now — a project edited since the run started
      * runs against what it has today — while the policies travel with the tree, since the attempt
      * ceilings behind a Loop's policy id were the Analyzer's to choose. One body for both entries:
@@ -326,7 +377,7 @@ export const RunSupervisorLive = Layer.scoped(
         const registry = yield* buildRegistry(cartridge?.config)
         yield* engine.run({
           runId: run.id,
-          task: { prompt: run.prompt, projectId: project.id },
+          task: { prompt: yield* withAttachments(run.id, run.prompt), projectId: project.id },
           tree: planned.tree,
           workspace,
           catalog: { blocks: registry.catalog.blocks, policies: planned.policies },
@@ -524,17 +575,30 @@ export const RunSupervisorLive = Layer.scoped(
             branch: workspace.branch,
             targetBranch: workspace.targetBranch,
           })
-
+          // The writes ride inside the supervised fiber: a failure there closes the run as
+          // `failed` (resumable, cancellable) instead of stranding a row nothing owns.
           yield* launch(
             runId,
-            Effect.zipRight(
-              planTree({
-                runId,
-                project: input.project,
-                prompt: input.prompt,
-                cwd: workspace.path,
-              }),
-              journal.awaitStart(runId),
+            Effect.forEach(
+              input.attachments ?? [],
+              (attachment) =>
+                artifacts.write({
+                  runId,
+                  kind: attachmentArtifactKind,
+                  name: attachment.name,
+                  content: attachment.content,
+                }),
+              { discard: true },
+            ).pipe(
+              Effect.zipRight(
+                planTree({
+                  runId,
+                  project: input.project,
+                  prompt: input.prompt,
+                  cwd: workspace.path,
+                }),
+              ),
+              Effect.zipRight(journal.awaitStart(runId)),
             ),
           )
           return runId
@@ -595,6 +659,28 @@ export const RunSupervisorLive = Layer.scoped(
         }),
 
       stop: (runId) => interrupt(runId, "stop"),
+
+      delete: (runId) =>
+        // Under the claim: a Start or Resume interleaving between the interrupt and the row
+        // deletion would register a fiber against rows that are about to vanish.
+        claim.withPermits(1)(
+          Effect.gen(function* () {
+            // First, and awaited: the interrupt returns once the fiber's finalizers have run, so
+            // nothing this daemon was executing can journal into a run that no longer exists.
+            yield* interrupt(runId, "cancel")
+            const run = yield* store.run(runId)
+            // Rows before files: a failure here leaves the run whole and resumable, while a
+            // cleanup failure after it leaves only orphan directories — never a run row whose
+            // artifacts and worktree are already gone.
+            yield* journal.deleteRun(runId)
+            if (run !== undefined) yield* discardWorkspace(run)
+            yield* Effect.ignoreLogged(
+              Effect.flatMap(artifacts.runDir(runId), (dir) =>
+                fs.remove(dir, { recursive: true, force: true }),
+              ),
+            )
+          }),
+        ),
 
       skip: (runId, nodeId) =>
         Effect.gen(function* () {

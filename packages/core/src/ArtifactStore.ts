@@ -52,7 +52,7 @@ export interface WriteArtifactInput {
   readonly kind: string
   /** File name suffix; the artifact id keeps two writes of the same name apart. */
   readonly name: string
-  readonly content: string
+  readonly content: string | Uint8Array
 }
 
 export class ArtifactStore extends Context.Tag("cockpit/ArtifactStore")<
@@ -85,8 +85,12 @@ export const ArtifactStoreLive = Layer.effect(
         Effect.gen(function* () {
           const artifactId = ArtifactId.make(randomUUID())
           const dir = yield* runDir(input.runId)
-          const path = NodePath.join(dir, `${artifactId}-${input.name}`)
-          const bytes = Buffer.byteLength(input.content)
+          // The name never carries a directory, whoever the caller is.
+          const path = NodePath.join(dir, `${artifactId}-${NodePath.basename(input.name)}`)
+          const bytes =
+            typeof input.content === "string"
+              ? Buffer.byteLength(input.content)
+              : input.content.byteLength
 
           yield* Effect.tryPromise({
             try: async () => {
@@ -112,7 +116,10 @@ export const ArtifactStoreLive = Layer.effect(
             path,
             kind: input.kind,
             bytes,
-            excerpt: clip(input.content, excerptChars),
+            excerpt:
+              typeof input.content === "string"
+                ? clip(input.content, excerptChars)
+                : `[binary ${bytes} bytes]`,
           } satisfies ArtifactRef
         }),
     }

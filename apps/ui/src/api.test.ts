@@ -77,6 +77,38 @@ describe("createProject", () => {
   })
 })
 
+describe("createRun", () => {
+  it("posts attachments beside the prompt when there are any", async () => {
+    const attachments = [{ name: "shot.png", contentBase64: "aGk=" }]
+    const calls = stubFetch((_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        projectId: "prj_1",
+        prompt: "use the screenshot",
+        attachments,
+      })
+      return new Response(JSON.stringify({ runId: "run_1" }), {
+        headers: { "content-type": "application/json" },
+      })
+    })
+
+    await expect(
+      httpSource.createRun("prj_1", "use the screenshot", attachments),
+    ).resolves.toEqual({ runId: "run_1" })
+    expect(calls).toEqual(["/api/runs"])
+  })
+
+  it("keeps the body attachment-free when nothing is attached", async () => {
+    stubFetch((_url, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ projectId: "prj_1", prompt: "plain" })
+      return new Response(JSON.stringify({ runId: "run_1" }), {
+        headers: { "content-type": "application/json" },
+      })
+    })
+
+    await expect(httpSource.createRun("prj_1", "plain", [])).resolves.toEqual({ runId: "run_1" })
+  })
+})
+
 describe("answer", () => {
   it("retries a 409 raised while the attempt is still parking", async () => {
     let n = 0
@@ -115,5 +147,28 @@ describe("answer", () => {
     const calls = stubFetch(() => new Response("", { status: 400 }))
     await expect(httpSource.answer("run_1", "implement", "a")).rejects.toThrow(/400/)
     expect(calls).toHaveLength(1)
+  })
+})
+
+describe("deleteRun", () => {
+  it("issues DELETE /api/runs/:id", async () => {
+    const calls = stubFetch((_url, init) => {
+      expect(init?.method).toBe("DELETE")
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+      })
+    })
+    await expect(httpSource.deleteRun("run_1")).resolves.toEqual({ ok: true })
+    expect(calls).toEqual(["/api/runs/run_1"])
+  })
+
+  it("surfaces the daemon's refusal", async () => {
+    stubFetch(() =>
+      new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    await expect(httpSource.deleteRun("run_x")).rejects.toThrow(/not found/)
   })
 })

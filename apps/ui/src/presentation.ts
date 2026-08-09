@@ -244,7 +244,6 @@ const HIDDEN = new Set([
   "RunCreated",
   "RunStarted",
   "BlockStarted",
-  "BlockFinished",
   // The answer is shown on the question card it belongs to, not as a row of its own.
   "QuestionAnswered",
 ])
@@ -266,6 +265,164 @@ const ESSENTIAL_HIDDEN = new Set([
   "TreeTransformed",
   "CheckpointCreated",
 ])
+
+/** One line of a result card: a paragraph, a "—" bullet, or a `key: value` fact. */
+export interface ProsePara {
+  readonly kind: "p" | "b" | "k"
+  readonly text: string
+}
+
+const PROSE_FIELDS = ["summary", "answer", "explanation", "description", "text", "message"]
+
+/**
+ * The human-readable half of a structured result: known narrative fields become paragraphs,
+ * remaining primitives become `key: value` facts. Nothing is invented — an object with no text
+ * yields no paragraphs, and the caller decides what to say instead.
+ */
+export function resultProse(inline: unknown): ProsePara[] {
+  if (typeof inline === "string") {
+    return inline.trim() === "" ? [] : [{ kind: "p", text: inline.trim() }]
+  }
+  if (typeof inline !== "object" || inline === null || Array.isArray(inline)) return []
+  const record = inline as Record<string, unknown>
+  const paras: ProsePara[] = []
+  for (const field of PROSE_FIELDS) {
+    const value = record[field]
+    if (typeof value === "string" && value.trim() !== "") {
+      paras.push({ kind: "p", text: value.trim() })
+    }
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (PROSE_FIELDS.includes(key)) continue
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      paras.push({ kind: "k", text: `${key}: ${value}` })
+    }
+  }
+  return paras
+}
+
+/** What a finished block has to show for itself, read off its own events — no invention. */
+export function outcomeProse(
+  state: RunState,
+  blockId: string,
+  finish: JournalEvent,
+  status: "succeeded" | "failed" | "interrupted",
+): ProsePara[] {
+  const events = state.events.filter((e) => e.blockId === blockId && e.seq <= finish.seq)
+  const paras: ProsePara[] = []
+
+  const result = events.findLast((e) => e.payload._tag === "ResultProduced")
+  if (result?.payload._tag === "ResultProduced") {
+    paras.push(...resultProse(result.payload.outputInline))
+  }
+  if (status !== "succeeded") {
+    const error = events.findLast((e) => e.payload._tag === "ErrorRaised")
+    if (error?.payload._tag === "ErrorRaised") {
+      paras.push({ kind: "p", text: error.payload.message })
+    }
+  }
+  if (paras.length === 0) {
+    // A block with no structured result often still narrated: its last assistant chunk is prose.
+    const chat = events.findLast(
+      (e) => e.payload._tag === "OutputChunk" && e.payload.streamKind === "assistant",
+    )
+    if (chat?.payload._tag === "OutputChunk") {
+      const text = chat.payload.excerpt.trim()
+      if (text !== "") {
+        paras.push({ kind: "p", text: text.length > 280 ? `${text.slice(0, 280)}…` : text })
+      }
+    }
+  }
+  if (paras.length === 0) {
+    paras.push({
+      kind: "p",
+      text:
+        status === "succeeded"
+          ? "The block finished without reporting a textual result; its events above carry the detail."
+          : `The block ended as ${status}; its events above carry the detail.`,
+    })
+  }
+
+  const verification = events.findLast((e) => e.payload._tag === "VerificationReported")
+  if (verification?.payload._tag === "VerificationReported") {
+    const passed = verification.payload.criteria.filter((c) => c.passed).length
+    paras.push({
+      kind: "b",
+      text: `Verification: ${passed} of ${verification.payload.criteria.length} criteria passed.`,
+    })
+  }
+  const commands = events.filter((e) => e.payload._tag === "CommandExecuted")
+  if (commands.length > 0) {
+    const failed = commands.filter(
+      (e) => e.payload._tag === "CommandExecuted" && !e.payload.success,
+    ).length
+    paras.push({
+      kind: "b",
+      text: `${commands.length} command${commands.length === 1 ? "" : "s"} run${failed ? `, ${failed} failed` : ""}.`,
+    })
+  }
+  // Counted from the same prefix the rest of the card reads, not the live attempts map — a
+  // later re-run of this block must not inflate an already-settled card.
+  const attempts = events.filter((e) => e.payload._tag === "AttemptStarted").length
+  if (attempts > 1) paras.push({ kind: "b", text: `Took ${attempts} attempts.` })
+  return paras
+}
+
+/**
+ * The run-finished card opens with these before any counters (reference design order). Success
+ * prose comes only from a succeeded run — a cancelled or failed one opening with the last block's
+ * success text would misattribute it to the whole run.
+ */
+export function summaryProse(
+  state: RunState,
+  status: "succeeded" | "failed" | "cancelled",
+  finish: JournalEvent,
+): ProsePara[] {
+  const paras: ProsePara[] = []
+  if (status === "succeeded") {
+    const result = state.events.findLast(
+      (e) => e.seq <= finish.seq && e.payload._tag === "ResultProduced",
+    )
+    if (result?.payload._tag === "ResultProduced") {
+      paras.push(...resultProse(result.payload.outputInline))
+    }
+  }
+  if (status === "failed") {
+    const error = state.events.findLast(
+      (e) => e.seq <= finish.seq && e.payload._tag === "ErrorRaised",
+    )
+    if (error?.payload._tag === "ErrorRaised") {
+      paras.push({ kind: "p", text: error.payload.message })
+    }
+  }
+  if (paras.length === 0) {
+    paras.push({
+      kind: "p",
+      text:
+        status === "succeeded"
+          ? "The run finished successfully; every block's own result card above tells what it did."
+          : status === "failed"
+            ? "The run failed; the last error and the failing block's card above say why."
+            : "The run was cancelled before it finished; nothing more will execute.",
+    })
+  }
+  const finalized = state.events.findLast((e) => e.payload._tag === "RunFinalized")
+  if (finalized?.payload._tag === "RunFinalized") {
+    const p = finalized.payload
+    paras.push({
+      kind: "b",
+      text: `Landed on ${p.targetBranch} as ${p.commit.slice(0, 8)} — ${p.mode} of ${p.commits} commit${p.commits === 1 ? "" : "s"}.`,
+    })
+  }
+  return paras
+}
+
+const outcomeDuration = (state: RunState, blockId: string, finish: JournalEvent): string => {
+  const started = state.blocks.get(blockId)?.startedAt
+  if (started === undefined) return ""
+  const ms = new Date(finish.ts).getTime() - new Date(started).getTime()
+  return Number.isFinite(ms) && ms > 0 ? fmtDuration(ms) : ""
+}
 
 export type StreamRow =
   | { readonly kind: "event"; readonly key: string; readonly event: JournalEvent; readonly view: EventView }
@@ -296,6 +453,15 @@ export type StreamRow =
     }
   | { readonly kind: "banner"; readonly key: string; readonly event: JournalEvent; readonly title: string }
   | {
+      readonly kind: "outcome"
+      readonly key: string
+      readonly event: JournalEvent
+      readonly title: string
+      readonly meta: string
+      readonly failed: boolean
+      readonly paras: readonly ProsePara[]
+    }
+  | {
       readonly kind: "failure"
       readonly key: string
       readonly event: JournalEvent
@@ -308,6 +474,7 @@ export type StreamRow =
       readonly key: string
       readonly event: JournalEvent
       readonly status: "succeeded" | "failed" | "cancelled"
+      readonly paras: readonly ProsePara[]
     }
 
 /**
@@ -341,6 +508,37 @@ const cached = (event: JournalEvent, row: StreamRow): StreamRow => {
   if (prev && prev.kind === row.kind && sameRow(prev, row)) return prev
   rowCache.set(event, row)
   return row
+}
+
+/**
+ * Prose reads only events at or before its own, so it is computed once per closing event — a fresh
+ * array each pass would defeat `cached` and remount the card every append. The prefix is not quite
+ * immutable: a reconnect backfill can insert lower-seq events after the fact (the store re-sorts),
+ * so the cache also remembers how many events sat in the prefix and recomputes when that grows.
+ */
+const proseCache = new WeakMap<
+  JournalEvent,
+  { readonly prefixLen: number; readonly paras: readonly ProsePara[] }
+>()
+
+const proseFor = (
+  state: RunState,
+  event: JournalEvent,
+  build: () => ProsePara[],
+): readonly ProsePara[] => {
+  let lo = 0
+  let hi = state.events.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (state.events[mid]!.seq <= event.seq) lo = mid + 1
+    else hi = mid
+  }
+  const prefixLen = lo
+  const prev = proseCache.get(event)
+  if (prev && prev.prefixLen === prefixLen) return prev.paras
+  const paras = build()
+  proseCache.set(event, { prefixLen, paras })
+  return paras
 }
 
 const attemptTitle = (
@@ -449,11 +647,44 @@ export function buildRows(
         )
         break
       }
+      case "BlockFinished": {
+        const blockId = e.blockId
+        if (blockId === undefined) break
+        const dur = outcomeDuration(state, blockId, e)
+        rows.push(
+          cached(e, {
+            kind: "outcome",
+            key,
+            event: e,
+            title: `${blockId} — ${p.status === "succeeded" ? "finished" : p.status}`,
+            meta: `${fmtClock(e.ts)}${dur ? ` · ${dur}` : ""}`,
+            failed: p.status !== "succeeded",
+            paras: proseFor(state, e, () => outcomeProse(state, blockId, e, p.status)),
+          }),
+        )
+        break
+      }
       case "RunFinished":
-        rows.push(cached(e, { kind: "summary", key, event: e, status: p.status }))
+        rows.push(
+          cached(e, {
+            kind: "summary",
+            key,
+            event: e,
+            status: p.status,
+            paras: proseFor(state, e, () => summaryProse(state, p.status, e)),
+          }),
+        )
         break
       case "RunCancelled":
-        rows.push(cached(e, { kind: "summary", key, event: e, status: "cancelled" }))
+        rows.push(
+          cached(e, {
+            kind: "summary",
+            key,
+            event: e,
+            status: "cancelled",
+            paras: proseFor(state, e, () => summaryProse(state, "cancelled", e)),
+          }),
+        )
         break
       case "RunStopped":
         rows.push(cached(e, { kind: "banner", key, event: e, title: "run stopped — resumable" }))
