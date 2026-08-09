@@ -154,13 +154,13 @@ interrupted runs are closed straight through the journal. Any other failure beco
 | `main.tsx` | React root. |
 | `App.tsx` | The three-panel shell: header with status/elapsed/actions, rail, stream, tree, idle screen, global keyboard handling, and every action callback. |
 | `Rail.tsx` | Left rail: project picker and add-project form, run list with status glyphs, new-task button, recent activity, insights toggle. |
-| `Stream.tsx` | Center panel: virtualized (`virtua`) event stream with expandable rows, approval cards, question cards, attempt headers, failure summaries, artifact viewers. |
+| `Stream.tsx` | Center panel: virtualized (`virtua`) event stream with expandable rows, approval cards, question cards, attempt headers, failure summaries, artifact viewers, and the essential/full-log mode toggle (essential is the default; component state only). |
 | `Tree.tsx` | Right panel: the workflow tree with per-node status, durations, loop attempt indicators, and block selection that filters the stream. |
 | `Insights.tsx` | The retrospective insights view with `all` / `core` / `cartridge` filters and detail. |
 | `model.ts` | The daemon's contracts mirrored by hand as plain TypeScript, deliberately, so `effect` is not pulled into the browser bundle for types alone. |
 | `api.ts` | `httpSource`: fetch wrappers, paged event backfill, the reconnecting WebSocket with exponential backoff, the artifact reader (413 → "too large" message), and the answer POST that backs off through the 409 window. |
 | `store.ts` | `applyEvents` — the pure fold from journal events to `RunState` (run status, blocks, attempts, pending gates, pending questions) — and the `useEventStore` hook that backfills then subscribes. |
-| `presentation.ts` | `describe` (one event → tag, tone, summary), `buildRows` (events → stream rows with caching so settled rows never remount), duration/clock formatting, diff parsing, and the resume/terminal copy. |
+| `presentation.ts` | `describe` (one event → tag, tone, summary), `buildRows` (events → stream rows with caching so settled rows never remount; a `mode` parameter hides the narration set — `ESSENTIAL_HIDDEN` — in the default essential view, while full mode matches the pre-toggle stream), duration/clock formatting, diff parsing, and the resume/terminal copy. |
 | `treeModel.ts` | `flattenTree`, `loopIndicator` (the `2/3`-style ticks), `maxAttemptsByBlock`. |
 | `insightModel.ts` | Insight row → view model. |
 | `render.tsx` | The heavy renderers: `shiki` code highlighting, xterm-backed ANSI, diff, Markdown, and the artifact body dispatcher. |
