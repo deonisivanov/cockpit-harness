@@ -1,7 +1,9 @@
 # Cockpit — usage-fixes stage status (handoff)
 
 Updated: 2026-08-09. Scope: the owner-feedback fixes plan, stages S1–S9 **complete and reviewed**;
-S10 parked (owner-blocked); S11 owner acceptance **pending — the only remaining work**. Base doc:
+S10 **done** (owner supplied the reference screenshots — `docs/about/deviations.md`, commit
+b3690d3, 26 rows, every deviation citing its ADR); S11 owner acceptance **pending — the only
+remaining work**. Base doc:
 `PROJECT_STATUS.md` (v1 handoff, still accurate for everything predating this stage). Plan of
 record: `.omc/plans/cockpit-usage-fixes.md` (revision 4). Ralph state:
 `.omc/state/sessions/9bc4007f-9f1f-45d7-9168-802944eb68f1/{prd.json,progress.txt}` (S4–S9),
@@ -13,8 +15,7 @@ record: `.omc/plans/cockpit-usage-fixes.md` (revision 4). Ralph state:
    Skip (#3b), run-by-human-decision (#2), empty-diff gates (#1b), answer template (#1a),
    stream noise (#4), per-block model/effort (#5), tree height + cursors (#6).
 2. **Next (owner):** S11 acceptance — the checklist below. Nothing else blocks it.
-3. S10 (reference audit vs `cockpit-eli5.html`) still parked: the file is not on disk; owner must
-   supply it. §17 v1 acceptance from the base handoff still parked behind S11.
+3. §17 v1 acceptance from the base handoff still parked behind S11.
 
 ## Completed (commits on `main`, working tree clean)
 
