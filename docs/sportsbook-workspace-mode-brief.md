@@ -141,3 +141,13 @@ The owner asked for the ideal shape, explicitly not a quick adaptation:
    rollups, where skip/stop attach.
 7. Registration/discovery lifecycle: repos added, moved, archived; a member that is dirty or on
    an unexpected branch at run start.
+8. Concurrency inside one workspace: two runs touching `shared-ui` at the same time — whose
+   worktree, whose finalize lands first? The claim today is per-run; a workspace likely needs a
+   lock (or an explicit queue) at the member-repo level, and the refusal has to be visible, not a
+   silent wait.
+9. Cost of routing: deciding which of twenty-plus repos a task touches must read declared
+   evidence (dependency manifests, lockfiles, the root cartridge's routing hints) — not grep the
+   whole workspace — or every run opens with an expensive exploration. Related contract question:
+   cross-repo verification as described breaks the current block contract (one block = one
+   worktree, one access mode); a multi-worktree read block is a new primitive and the most
+   isolation-sensitive part of the design.
