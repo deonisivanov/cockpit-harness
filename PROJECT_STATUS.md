@@ -6,7 +6,9 @@ Updated: 2026-08-08 (late). Phase: **v1 code complete — all 8 planned phases +
 
 Cockpit — local, single-user control room: user prompt → hybrid Analyzer picks/parameterizes a workflow template from the cartridge → deterministic transforms + validators → agent blocks (Claude Code / Codex CLI on the user's subscription, no API keys) and command blocks execute in an isolated git worktree with durable SQLite journaling, typed failure packets, adaptive retries, approval gates, question suspend/resume, crash recovery **and run re-entry**, terminal handoff into herdr, finalize onto the target branch, cross-run retrospective insights, three-panel web UI. Core (`packages/core`) + per-project cartridge (`<project>/.cockpit/`, multi-file layout). Effect end to end.
 
-Docs: `docs/about/` (self-contained onboarding, 7 files — attach to new chats as context), `docs/cockpit-plan.md`, `docs/contracts.md` (all "settled in Phase N" notes), `docs/adr.md`, `docs/acceptance-plan.md` (§17 checklist).
+Docs: `docs/about/` (self-contained onboarding, 8 files — attach to new chats as context), `docs/cockpit-plan.md`, `docs/contracts.md` (all "settled in Phase N" notes), `docs/adr.md`, `docs/acceptance-plan.md` (§17 checklist).
+
+Reference audit: `docs/about/deviations.md` — 26 rows against Klimov's `cockpit-eli5.html` (the GitLab-oriented original), each difference marked Match / Deviation / Deferred with the ADR it follows from.
 
 ## State (commits on `main`, no remote; working tree clean)
 

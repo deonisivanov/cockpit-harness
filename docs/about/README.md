@@ -44,6 +44,7 @@ re-executing anything the journal already completed.
 | [`run.md`](run.md) | Every real command in the repo: build, dev, test, e2e, lint, the UI mock harness, boot verification, and CI. |
 | [`conventions.md`](conventions.md) | The rules this codebase actually lives by, plus how to add a service, a cartridge, an API route or an event type. |
 | [`troubleshooting.md`](troubleshooting.md) | Real failure modes with the exact messages they produce and what each one means. |
+| [`deviations.md`](deviations.md) | Every deliberate difference from the reference cockpit this one was read from, with the decision behind each. |
 
 ## Facts worth knowing before you read further
 
