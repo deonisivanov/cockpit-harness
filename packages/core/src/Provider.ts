@@ -19,8 +19,9 @@ export const ProviderName = Schema.Literal("claude-code", "codex")
 export type ProviderName = typeof ProviderName.Type
 
 /**
- * The set `claude --help` publishes. Codex validates nothing — it forwards whatever
- * `model_reasoning_effort` holds and the API rejects it — so this is the only CLI-backed set there is.
+ * The set `claude --help` publishes, and a strict subset of codex's own closed enum (which also
+ * parses `minimal` and `ultra`) — so no schema-legal effort here is rejected by either CLI; codex's
+ * extra values are simply unreachable by this schema, not by omission.
  */
 export const Effort = Schema.Literal("low", "medium", "high", "xhigh", "max")
 export type Effort = typeof Effort.Type

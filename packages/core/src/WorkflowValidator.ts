@@ -123,6 +123,8 @@ const walk = (
     }
 
     const command = node.overrides?.command ?? def.command
+    const model = node.overrides?.model ?? def.model
+    const effort = node.overrides?.effort ?? def.effort
     if (def.kind === "agent") {
       if (def.provider === undefined) {
         errors.push(fail("block-kind", at, "an agent block must name a provider"))
@@ -139,9 +141,18 @@ const walk = (
       if (def.kind === "workspace" && command !== undefined) {
         errors.push(fail("block-kind", at, "a workspace block must not carry a command"))
       }
-      if (def.provider !== undefined || def.binding !== undefined) {
+      if (
+        def.provider !== undefined ||
+        def.binding !== undefined ||
+        model !== undefined ||
+        effort !== undefined
+      ) {
         errors.push(
-          fail("block-kind", at, `a ${def.kind} block must not name a provider or binding`),
+          fail(
+            "block-kind",
+            at,
+            `a ${def.kind} block must not name a provider, binding, model, or effort`,
+          ),
         )
       }
       const produced = def.kind === "workspace" ? finalizeResult : commandResult

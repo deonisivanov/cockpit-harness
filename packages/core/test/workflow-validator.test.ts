@@ -138,6 +138,26 @@ const cases: ReadonlyArray<Case> = [
     tree: tree(block("land", finalize.id, { overrides: { command: { argv: ["true"] } } })),
   },
   {
+    name: "a command block with a def-level model",
+    rule: "block-kind",
+    tree: tree(block("cmd", "modeled-command", { overrides: { command: { argv: ["true"] } } })),
+    catalog: catalog([{ ...runCommand, id: "modeled-command", model: "opus" }]),
+  },
+  {
+    name: "a command block with an override-level effort",
+    rule: "block-kind",
+    tree: tree(
+      block("cmd", runCommand.id, {
+        overrides: { command: { argv: ["true"] }, effort: "high" },
+      }),
+    ),
+  },
+  {
+    name: "an agent block naming both a model and an effort",
+    tree: tree(block("a", "modeled-agent")),
+    catalog: catalog([{ ...agentTask, id: "modeled-agent", model: "opus", effort: "high" }]),
+  },
+  {
     name: "a workspace block promising a field finalize cannot report",
     rule: "workspace-output",
     tree: tree(block("land", "chatty-finalize")),

@@ -102,7 +102,7 @@ export const writeScript = async (script: FakeScript) => {
   return RunId.make(`run-${NodePath.basename(dir)}`)
 }
 
-/** The argv the stand-in was last spawned with for a block; the only place a composed flag shows up. */
+/** The argv the stand-in was last spawned with for a block. */
 export const spawnedArgv = async (block: string): Promise<ReadonlyArray<string>> =>
   JSON.parse(await readFile(`${process.env.COCKPIT_FAKE_SCRIPT}.${block}.argv`, "utf8"))
 

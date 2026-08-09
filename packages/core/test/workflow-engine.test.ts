@@ -4,6 +4,7 @@ import * as NodePath from "node:path"
 import { expect, it } from "vitest"
 import {
   agentTask,
+  BlockDef,
   BlockId,
   CheckpointService,
   correctivePolicy,
@@ -62,7 +63,7 @@ it("runs a sequence in order and hands each output to the next block", async () 
 }, 30_000)
 
 it("runs a block under the model its node names and the effort only its definition names", async () => {
-  const opinionated = { ...agentTask, id: "opinionated", model: "sonnet", effort: "low" as const }
+  const opinionated: BlockDef = { ...agentTask, id: "opinionated", model: "sonnet", effort: "low" }
 
   const outcome = await withEngine(
     { opinionated: summary("done") },

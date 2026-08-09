@@ -50,6 +50,17 @@ export const makeRepo = () => {
   return repoPath
 }
 
+/** Drops a cartridge config into a repo's `.cockpit`, for tests exercising the cartridge wire. */
+export const writeCartridge = (repoPath: string, source: string) => {
+  const dir = NodePath.join(repoPath, ".cockpit")
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(NodePath.join(dir, "cockpit.config.ts"), source)
+}
+
+/** The argv the stand-in was last spawned with for a block; mirrors packages/core/test/engine-harness.ts. */
+export const spawnedArgv = (block: string): ReadonlyArray<string> =>
+  JSON.parse(readFileSync(`${process.env.COCKPIT_FAKE_SCRIPT}.${block}.argv`, "utf8"))
+
 /** The stand-in reads its script from the environment it is spawned with, not from Effect config. */
 export const writeScript = (script: Readonly<Record<string, unknown>>) => {
   const path = NodePath.join(tempDir("cockpitd-script-"), "script.json")

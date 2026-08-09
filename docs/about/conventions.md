@@ -144,7 +144,7 @@ example of every rule:
 - **`rules`** is free-form data injected into the Analyzer's prompt: the project's non-negotiables.
 - **`model` and `effort`** sit on a block, or on a node's `overrides` where they win: a cheap gate need
   not run on the model that writes the code, and `analyzer: { provider, model, effort }` says the same
-  about planning. Naming neither spawns the CLI with no flag at all, as before. Model names are
+  about planning. Naming neither leaves both flags off, as before. Model names are
   unchecked beyond being non-empty — a wrong one fails at the CLI more clearly than a schema could.
 
 ### A new API route

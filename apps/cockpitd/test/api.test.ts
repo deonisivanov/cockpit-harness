@@ -7,11 +7,13 @@ import {
   events,
   json,
   makeRepo,
+  spawnedArgv,
   startRun,
   tagged,
   tempDir,
   waitFor,
   withApi,
+  writeCartridge,
   writeScript,
 } from "./harness.js"
 
@@ -843,4 +845,27 @@ it(
     expect(result.firstAttempts[0].id).not.toBe(result.secondAttempts[0].id)
   },
   4 * minutes,
+)
+
+it(
+  "runs the Analyzer under the model a project's cartridge configures for it",
+  async () => {
+    writeScript({ analyzer: chooses("quickfix") })
+    const repoPath = makeRepo()
+    writeCartridge(
+      repoPath,
+      `export default { name: "sample", analyzer: { model: "opus" } }\n`,
+    )
+
+    await withApi((client) =>
+      Effect.gen(function* () {
+        const project = yield* register(client, repoPath)
+        const { runId } = yield* plan(client, project.id, "small fix")
+        yield* waitFor(runId, (found) => tagged(found, "RunAwaitingStart").length > 0)
+      }),
+    )
+
+    expect(spawnedArgv("analyzer").join(" ")).toContain("--model opus")
+  },
+  2 * minutes,
 )
