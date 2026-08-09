@@ -217,12 +217,17 @@ describe("buildRows", () => {
   })
 
   it("hides run and block bookkeeping the other panels already show", () => {
-    const rows = rowsOf(
-      ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
-      ev({ _tag: "RunStarted" }),
-      ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
-      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
-      ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
+    // Full mode: this test is about the unconditional HIDDEN set, not essential-mode narration hiding.
+    const rows = buildRows(
+      applyEvents(emptyRunState(), [
+        ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
+        ev({ _tag: "RunStarted" }),
+        ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+        ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+        ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
+      ]),
+      undefined,
+      "full",
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.kind === "event" && rows[0].view.tag).toBe("session")
@@ -257,14 +262,17 @@ describe("buildRows", () => {
   })
 
   it("reuses row objects for events whose rendering did not change", () => {
+    // Full mode: row-cache identity is orthogonal to which mode's hidden set applies.
     const first = applyEvents(emptyRunState(), [
       ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
       ev({ _tag: "AttemptStarted", number: 1 }, "implement", "at2"),
     ])
-    const before = buildRows(first)
+    const before = buildRows(first, undefined, "full")
 
     const after = buildRows(
       applyEvents(first, [ev({ _tag: "CheckpointCreated", checkpointId: "abc", kind: "success" })]),
+      undefined,
+      "full",
     )
     expect(after).toHaveLength(before.length + 1)
     expect(after[0]).toBe(before[0])
@@ -297,11 +305,105 @@ describe("buildRows", () => {
   })
 })
 
+describe("buildRows — stream mode", () => {
+  const narrationEvents = () => [
+    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 1" }),
+    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 2" }),
+    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 3" }),
+    ev({ _tag: "AgentActivity", activity: "explore" }),
+    ev({ _tag: "PromptComposed", promptRef: "art_prompt" }),
+    ev({ _tag: "SessionStarted", sessionId: "s1" }),
+    ev({ _tag: "SessionResumed", sessionId: "s1" }),
+    ev({ _tag: "ArtifactCreated", artifactId: "art_1", kind: "diff", path: "/x", bytes: 12 }),
+    ev({ _tag: "PluginResolved", provider: { name: "codex" }, capabilities: [] }),
+    ev({ _tag: "TreeTransformed", name: "prune", diffRef: "art_diff" }),
+    ev({ _tag: "CheckpointCreated", checkpointId: "c1", kind: "success" }),
+    ev({ _tag: "TreeValidated", errors: [] }),
+  ]
+
+  it("drops an OutputChunk storm and every other narration tag, including a clean TreeValidated", () => {
+    const state = applyEvents(emptyRunState(), narrationEvents())
+    expect(buildRows(state, undefined, "essential")).toHaveLength(0)
+  })
+
+  it("keeps every tag the run's spine depends on", () => {
+    const events = [
+      ev({ _tag: "AttemptStarted", number: 1 }, "implement", "at1"),
+      ev({ _tag: "AttemptFinished", verdict: "semantic-failure" }, "implement", "at1"),
+      ev({ _tag: "ResultProduced", outputInline: { summary: "done" } }, "implement", "at1"),
+      ev(
+        { _tag: "CommandExecuted", argv: ["rspec"], exitCode: 0, timedOut: false, durationMs: 1, success: true },
+        "implement",
+        "at1",
+      ),
+      ev({ _tag: "ErrorRaised", class: "semantic", signature: "s", message: "m" }, "implement", "at1"),
+      ev({ _tag: "QuestionAsked", question: "q?" }, "implement", "at1"),
+      ev({ _tag: "ApprovalRequested", gateId: "g", payloadRef: "art_g" }, "g"),
+      ev({ _tag: "ApprovalDecided", gateId: "g", approved: true }, "g"),
+      ev({ _tag: "RetryScheduled", class: "semantic", nextAttempt: 2, delayMs: 10 }, "implement", "at1"),
+      ev({ _tag: "VerificationReported", criteria: [{ criterion: "a", passed: true }] }, "implement", "at1"),
+      ev({ _tag: "FailureFeedbackForwarded", packetRef: "art_p" }, "implement", "at1"),
+      ev({ _tag: "BlockSkipped", reason: "r" }, "skip-block"),
+      ev({ _tag: "BlockReplayed", defId: "d", reason: "r" }, "replay-block"),
+      ev({ _tag: "TreeAnalyzed", templateId: "t", rationale: "r", decision: {}, fallback: false }),
+      ev({ _tag: "TreeValidated", errors: [{ rule: "r", path: ["a"], message: "bad" }] }),
+      ev({
+        _tag: "RunFinalized",
+        targetBranch: "main",
+        mode: "squash",
+        commit: "abcdef1234",
+        commits: 1,
+        previousTip: "1234567890",
+      }),
+      ev({ _tag: "RunCancelled" }),
+      ev({ _tag: "RunStopped" }),
+      ev({ _tag: "RunRecovered" }),
+      ev({ _tag: "RunResumed" }),
+      ev({ _tag: "RunFinished", status: "succeeded" }),
+      ev({ _tag: "RunAwaitingStart" }),
+    ]
+    const state = applyEvents(emptyRunState(), events)
+    const tagsShown = new Set(buildRows(state, undefined, "essential").map((r) => r.event.payload._tag))
+    for (const e of events)
+      expect(tagsShown, `${e.payload._tag} missing from the essential stream`).toContain(e.payload._tag)
+  })
+
+  it("shows every narration tag in full mode, one row per event — byte-identical to today's output", () => {
+    const events = narrationEvents()
+    const state = applyEvents(emptyRunState(), events)
+    const rows = buildRows(state, undefined, "full")
+    expect(rows.map((r) => r.event.payload._tag)).toEqual(events.map((e) => e.payload._tag))
+  })
+
+  it("still hides run/block bookkeeping in full mode — HIDDEN applies regardless of mode", () => {
+    const rows = buildRows(
+      applyEvents(emptyRunState(), [
+        ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
+        ev({ _tag: "RunStarted" }),
+        ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+        ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+      ]),
+      undefined,
+      "full",
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it("defaults to essential mode when none is given", () => {
+    expect(rowsOf(ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "x" }))).toHaveLength(0)
+  })
+})
+
 describe("filterRows", () => {
   it("keeps only the selected block's rows and restores everything on clear", () => {
-    const rows = rowsOf(
-      ev({ _tag: "SessionStarted", sessionId: "a" }, "explore", "at1"),
-      ev({ _tag: "SessionStarted", sessionId: "b" }, "implement", "at2"),
+    // Full mode: filtering by block is orthogonal to which mode's hidden set applies.
+    const rows = buildRows(
+      applyEvents(emptyRunState(), [
+        ev({ _tag: "SessionStarted", sessionId: "a" }, "explore", "at1"),
+        ev({ _tag: "SessionStarted", sessionId: "b" }, "implement", "at2"),
+      ]),
+      undefined,
+      "full",
     )
     expect(filterRows(rows, "implement")).toHaveLength(1)
     expect(filterRows(rows, null)).toHaveLength(2)

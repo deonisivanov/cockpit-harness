@@ -12,6 +12,7 @@ import {
   resumable,
   RUN_TITLE,
   startable,
+  type StreamMode,
   TERMINAL_TITLE,
   TERMINAL_WAITING_WARNING,
   TERMINAL_WRITE_WARNING,
@@ -55,6 +56,7 @@ export default function App() {
   const [treeOpen, setTreeOpen] = useState(true)
   const [width, setWidth] = useState(() => window.innerWidth)
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null)
+  const [streamMode, setStreamMode] = useState<StreamMode>("essential")
   const [focus, setFocus] = useState(-1)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -138,7 +140,10 @@ export default function App() {
       ),
     [detail],
   )
-  const allRows = useMemo(() => buildRows(state, maxAttempts), [state, maxAttempts])
+  const allRows = useMemo(
+    () => buildRows(state, maxAttempts, streamMode),
+    [state, maxAttempts, streamMode],
+  )
   const rows = useMemo(() => filterRows(allRows, selectedBlock), [allRows, selectedBlock])
 
   const toggleRow = useCallback((key: string) => {
@@ -502,6 +507,8 @@ export default function App() {
                   sub={isLive ? "live" : state.runStatus === "succeeded" ? "closed" : state.runStatus}
                   filter={selectedBlock}
                   onClearFilter={() => setSelectedBlock(null)}
+                  mode={streamMode}
+                  onModeChange={setStreamMode}
                   focus={focus}
                   onFocus={setFocus}
                   expanded={expanded}

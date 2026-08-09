@@ -247,6 +247,24 @@ const HIDDEN = new Set([
   "QuestionAnswered",
 ])
 
+export type StreamMode = "essential" | "full"
+
+/**
+ * Essential mode additionally hides narration: provenance the tree and the attempt header already
+ * carry, or raw output that has an artifact behind it and a block boundary pointing at it.
+ */
+const ESSENTIAL_HIDDEN = new Set([
+  "OutputChunk",
+  "AgentActivity",
+  "PromptComposed",
+  "SessionStarted",
+  "SessionResumed",
+  "ArtifactCreated",
+  "PluginResolved",
+  "TreeTransformed",
+  "CheckpointCreated",
+])
+
 export type StreamRow =
   | { readonly kind: "event"; readonly key: string; readonly event: JournalEvent; readonly view: EventView }
   | {
@@ -332,6 +350,7 @@ const attemptTitle = (
 export function buildRows(
   state: RunState,
   maxAttempts?: ReadonlyMap<string, number>,
+  mode: StreamMode = "essential",
 ): StreamRow[] {
   const decisions = new Map<string, { approved: boolean; note?: string }>()
   const packets = new Map<string, string>()
@@ -447,9 +466,14 @@ export function buildRows(
           }),
         )
         break
-      default:
-        if (!HIDDEN.has(p._tag))
-          rows.push(cached(e, { kind: "event", key, event: e, view: describe(p) }))
+      default: {
+        if (HIDDEN.has(p._tag)) break
+        if (mode === "essential") {
+          if (ESSENTIAL_HIDDEN.has(p._tag)) break
+          if (p._tag === "TreeValidated" && p.errors.length === 0) break
+        }
+        rows.push(cached(e, { kind: "event", key, event: e, view: describe(p) }))
+      }
     }
   }
   return rows

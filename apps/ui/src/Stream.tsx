@@ -7,6 +7,7 @@ import {
   fmtDuration,
   TERMINAL_TITLE,
   toneClass,
+  type StreamMode,
   type StreamRow,
 } from "./presentation.js"
 import { Ansi, ArtifactBodyView, Code, Markdown } from "./render.js"
@@ -595,6 +596,8 @@ export interface StreamProps {
   readonly sub: string
   readonly filter: string | null
   readonly onClearFilter: () => void
+  readonly mode: StreamMode
+  readonly onModeChange: (mode: StreamMode) => void
   readonly focus: number
   readonly onFocus: (i: number) => void
   readonly expanded: ReadonlySet<string>
@@ -616,6 +619,8 @@ export function Stream({
   sub,
   filter,
   onClearFilter,
+  mode,
+  onModeChange,
   focus,
   onFocus,
   expanded,
@@ -678,6 +683,17 @@ export function Stream({
           </button>
         )}
         <div className="flex-1" />
+        <button
+          type="button"
+          data-testid="stream-mode"
+          onClick={() => onModeChange(mode === "essential" ? "full" : "essential")}
+          title="essential hides narration the tree and attempt header already carry; full shows every journal row"
+          className={`flex-none rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
+            mode === "full" ? "border-white/18 text-[#c4c4ce]" : "border-white/7 text-[#55555f]"
+          }`}
+        >
+          {mode === "full" ? "full log" : "essential"}
+        </button>
         <button
           type="button"
           onClick={() => setWrap((w) => !w)}
