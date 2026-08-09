@@ -1,5 +1,12 @@
 import { Schema } from "effect"
-import { agentTask, correctivePolicy, finalize, runCommand, verifyOutput } from "./blocks.js"
+import {
+  agentTask,
+  answerQuestion,
+  correctivePolicy,
+  finalize,
+  runCommand,
+  verifyOutput,
+} from "./blocks.js"
 import { BlockId } from "./ids.js"
 import { ContractField, PluginBinding, WorkflowNode } from "./workflow.js"
 
@@ -171,9 +178,23 @@ const guardedFix: WorkflowTemplate = {
   retryBounds: { implement: { min: 1, max: 4 } },
 }
 
+const answer: WorkflowTemplate = {
+  id: "answer",
+  description:
+    "Answer a question about the repository without changing it — explanations, investigations, 'how does X work', 'what is this project'. Choose this whenever the prompt asks for understanding rather than a change. Nothing is written and nothing is landed.",
+  tree: {
+    _tag: "Sequence",
+    children: [{ _tag: "Block", id: id("answer"), def: answerQuestion.id }],
+  },
+  params: [],
+  optionalBlocks: [],
+  allowedBindings: {},
+  retryBounds: {},
+}
+
 /**
  * Core templates bind no plugins: a plugin a template demanded would fail preflight on any machine
  * without it, and plan §7 puts mandatory bindings in the cartridge. Cartridges add templates whose
  * `allowedBindings` give the Analyzer something to choose from.
  */
-export const coreTemplates: ReadonlyArray<WorkflowTemplate> = [task, quickfix, guardedFix]
+export const coreTemplates: ReadonlyArray<WorkflowTemplate> = [task, quickfix, guardedFix, answer]

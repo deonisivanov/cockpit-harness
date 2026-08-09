@@ -145,8 +145,23 @@ export function describe(payload: EventPayload): EventView {
         summary: firstLine(payload.excerpt),
         ...none,
       }
-    case "ResultProduced":
-      return { tag: "result", tone: "green", summary: "result produced", ...none }
+    case "ResultProduced": {
+      // An answer run's whole product is one string field, so the row says it. A result with no
+      // string in it — a verdict, a commit — has nothing worth a line and keeps the fixed one.
+      const inline = payload.outputInline
+      const text =
+        typeof inline === "object" && inline !== null
+          ? Object.values(inline).find(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            )
+          : undefined
+      return {
+        tag: "result",
+        tone: "green",
+        summary: text === undefined ? "result produced" : firstLine(text),
+        ...none,
+      }
+    }
     case "ErrorRaised":
       return { tag: "error", tone: "red", summary: `${payload.signature} — ${payload.message}`, ...none }
     case "ArtifactCreated":

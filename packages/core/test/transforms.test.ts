@@ -3,13 +3,18 @@ import { readFile } from "node:fs/promises"
 import { expect, it } from "vitest"
 import {
   agentTask,
+  blocksIn,
   Cartridge,
+  finalize,
   Journal,
+  runCommand,
   RunId,
   TransformContext,
   TransformPipeline,
   treeDiff,
   ValidationError,
+  verifyOutput,
+  WorkflowNode,
   WorkflowTree,
 } from "../src/index.js"
 import { block, catalog, id } from "./trees.js"
@@ -23,7 +28,10 @@ const context: TransformContext = {
 
 const seen: string[] = []
 
-const runPipeline = async (cartridge: Cartridge | undefined, root = block("a", agentTask.id)) => {
+const runPipeline = async (
+  cartridge: Cartridge | undefined,
+  root: WorkflowNode = block("a", agentTask.id),
+) => {
   const home = await tempHome()
   const runId = RunId.make(`run-${Math.random().toString(36).slice(2)}`)
   seen.length = 0
@@ -114,6 +122,46 @@ it("diffs a transform that edits the tree in place instead of rebuilding it", as
 
   expect(Either.getOrThrow(outcome).templateId).toBe("mutated")
   expect(diffs[0]).toContain('root.templateId: "start" -> "mutated"')
+})
+
+/**
+ * A cartridge appends its quality gates before whatever finalize the tree has, and most trees have
+ * none — quickfix and guarded-fix both end at their loop. A transform that skipped a finalize-less
+ * tree would strip the project's gates from exactly those runs.
+ */
+it("applies an append-before-finalize transform to a tree that has no finalize", async () => {
+  const { outcome } = await runPipeline(
+    cartridge({
+      transforms: [
+        {
+          name: "append-lint",
+          apply: (tree) => ({
+            ...tree,
+            root: {
+              _tag: "Sequence",
+              children: [
+                tree.root,
+                block("lint", runCommand.id, {
+                  overrides: { command: { argv: ["bash", "-lc", "npm run lint"] } },
+                }),
+              ],
+            },
+          }),
+        },
+      ],
+    }),
+    {
+      _tag: "Sequence",
+      children: [
+        block("implement", agentTask.id),
+        block("verify", verifyOutput.id, { inputs: [id("implement")] }),
+      ],
+    },
+  )
+
+  const tree = Either.getOrThrow(outcome)
+  expect(blocksIn(tree.root).map((node) => node.id)).toEqual(["implement", "verify", "lint"])
+  expect(blocksIn(tree.root).some((node) => node.def === finalize.id)).toBe(false)
 })
 
 it("hands every transform the project context", async () => {

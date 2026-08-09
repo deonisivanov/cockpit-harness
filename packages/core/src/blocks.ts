@@ -67,6 +67,22 @@ export const verifyOutput: BlockDef = {
   fallback: { _tag: "Fail" },
 }
 
+export const answerQuestion: BlockDef = {
+  id: "answer-question",
+  kind: "agent",
+  title: "Answer the question about the repository",
+  input: [],
+  output: [{ name: "answer", type: "string", required: true }],
+  provider: "claude-code",
+  sessionPolicy: "fresh",
+  retryPolicy: singleAttemptPolicy.id,
+  timeoutMs: 5 * minute,
+  permissionProfile: "read-plus-output",
+  workspaceAccess: "read",
+  successCriteria: [],
+  fallback: { _tag: "Fail" },
+}
+
 /** The argv belongs to whoever knows the project, so every use overrides it. */
 export const runCommand: BlockDef = {
   id: "run-command",
@@ -109,6 +125,12 @@ export const finalize: BlockDef = {
   fallback: { _tag: "Fail" },
 }
 
-export const coreBlocks: ReadonlyArray<BlockDef> = [agentTask, verifyOutput, runCommand, finalize]
+export const coreBlocks: ReadonlyArray<BlockDef> = [
+  agentTask,
+  verifyOutput,
+  answerQuestion,
+  runCommand,
+  finalize,
+]
 
 export const coreRetryPolicies: ReadonlyArray<RetryPolicy> = [singleAttemptPolicy, correctivePolicy]

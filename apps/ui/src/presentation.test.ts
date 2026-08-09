@@ -100,6 +100,27 @@ describe("describe", () => {
     expect(view.tone).toBe("red")
   })
 
+  it("reads an answer out of an inline result instead of announcing that one exists", () => {
+    const view = describeEvent({
+      _tag: "ResultProduced",
+      outputInline: { answer: "The engine fails a block when its criteria do not hold.\nDetails…" },
+    })
+    expect(view).toMatchObject({
+      tag: "result",
+      tone: "green",
+      summary: "The engine fails a block when its criteria do not hold.",
+    })
+
+    const verdict = describeEvent({
+      _tag: "ResultProduced",
+      outputInline: { passed: true, findings: [] },
+    })
+    expect(verdict.summary).toBe("result produced")
+    expect(describeEvent({ _tag: "ResultProduced", outputRef: "art_1" }).summary).toBe(
+      "result produced",
+    )
+  })
+
   it("flags an analyzer fallback", () => {
     const view = describeEvent({
       _tag: "TreeAnalyzed",
