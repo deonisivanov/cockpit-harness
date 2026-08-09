@@ -687,12 +687,12 @@ export function Stream({
           type="button"
           data-testid="stream-mode"
           onClick={() => onModeChange(mode === "essential" ? "full" : "essential")}
-          title="essential hides narration the tree and attempt header already carry; full shows every journal row"
+          title="essential hides narration the tree and attempt header already carry"
           className={`flex-none rounded-sm border px-2 py-0.5 font-mono text-[10px] ${
             mode === "full" ? "border-white/18 text-[#c4c4ce]" : "border-white/7 text-[#55555f]"
           }`}
         >
-          {mode === "full" ? "full log" : "essential"}
+          full log
         </button>
         <button
           type="button"

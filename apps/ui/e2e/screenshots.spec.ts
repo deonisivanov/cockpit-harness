@@ -33,15 +33,11 @@ shot("approval", "approval", async (page) => {
 
 shot("finished", "finished", async (page) => {
   await expect(page.getByTestId("summary-card")).toBeVisible()
-})
-
-shot("stream-essential", "finished", async (page) => {
-  await expect(page.getByTestId("summary-card")).toBeVisible()
-  await expect(page.getByTestId("stream-mode")).toHaveText("essential")
+  await expect(page.getByTestId("stream-mode")).toHaveText("full log")
 })
 
 shot("stream-full", "finished", async (page) => {
   await expect(page.getByTestId("summary-card")).toBeVisible()
   await page.getByTestId("stream-mode").click()
-  await expect(page.getByTestId("stream-mode")).toHaveText("full log")
+  await expect(page.getByTestId("stream-mode")).toHaveClass(/border-white\/18/)
 })

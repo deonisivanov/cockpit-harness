@@ -217,6 +217,8 @@ export function describe(payload: EventPayload): EventView {
       }
     case "AttemptFinished":
       return { tag: "attempt", tone: payload.verdict === "success" ? "green" : "red", summary: `attempt ${payload.verdict}`, ...none }
+    case "AttemptInterrupted":
+      return { tag: "attempt", tone: "amber", summary: "attempt interrupted", ...none }
     case "BlockSkipped":
       return { tag: "block", tone: "slate", summary: `skipped · ${payload.reason}`, ...none }
     case "BlockSkipRequested":
@@ -251,10 +253,10 @@ export type StreamMode = "essential" | "full"
 
 /**
  * Essential mode additionally hides narration: provenance the tree and the attempt header already
- * carry, or raw output that has an artifact behind it and a block boundary pointing at it.
+ * carry. OutputChunk stays visible — the journal carries only a couple per block, not a firehose,
+ * and it's often the only diagnostic a failed command block has.
  */
 const ESSENTIAL_HIDDEN = new Set([
-  "OutputChunk",
   "AgentActivity",
   "PromptComposed",
   "SessionStarted",

@@ -24,6 +24,8 @@ const ev = (payload: EventPayload, blockId?: string, attemptId?: string): Journa
 })
 
 const rowsOf = (...events: JournalEvent[]) => buildRows(applyEvents(emptyRunState(), events))
+const fullRowsOf = (...events: JournalEvent[]) =>
+  buildRows(applyEvents(emptyRunState(), events), undefined, "full")
 
 const statuses: RunStatus[] = [
   "created",
@@ -140,6 +142,10 @@ describe("describe", () => {
     expect(view.tone).toBe("amber")
     expect(view.summary).toContain("fallback")
   })
+
+  it("reads an interrupted attempt as prose, not a raw tag", () => {
+    expect(describeEvent({ _tag: "AttemptInterrupted" }).summary).toBe("attempt interrupted")
+  })
 })
 
 describe("buildRows", () => {
@@ -217,17 +223,12 @@ describe("buildRows", () => {
   })
 
   it("hides run and block bookkeeping the other panels already show", () => {
-    // Full mode: this test is about the unconditional HIDDEN set, not essential-mode narration hiding.
-    const rows = buildRows(
-      applyEvents(emptyRunState(), [
-        ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
-        ev({ _tag: "RunStarted" }),
-        ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
-        ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
-        ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
-      ]),
-      undefined,
-      "full",
+    const rows = fullRowsOf(
+      ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
+      ev({ _tag: "RunStarted" }),
+      ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
+      ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
+      ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
     )
     expect(rows).toHaveLength(1)
     expect(rows[0]?.kind === "event" && rows[0].view.tag).toBe("session")
@@ -262,7 +263,6 @@ describe("buildRows", () => {
   })
 
   it("reuses row objects for events whose rendering did not change", () => {
-    // Full mode: row-cache identity is orthogonal to which mode's hidden set applies.
     const first = applyEvents(emptyRunState(), [
       ev({ _tag: "SessionStarted", sessionId: "sess_a" }, "explore", "at1"),
       ev({ _tag: "AttemptStarted", number: 1 }, "implement", "at2"),
@@ -306,10 +306,8 @@ describe("buildRows", () => {
 })
 
 describe("buildRows — stream mode", () => {
-  const narrationEvents = () => [
-    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 1" }),
-    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 2" }),
-    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk 3" }),
+  const narrationEvents = [
+    ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "chunk" }),
     ev({ _tag: "AgentActivity", activity: "explore" }),
     ev({ _tag: "PromptComposed", promptRef: "art_prompt" }),
     ev({ _tag: "SessionStarted", sessionId: "s1" }),
@@ -321,9 +319,10 @@ describe("buildRows — stream mode", () => {
     ev({ _tag: "TreeValidated", errors: [] }),
   ]
 
-  it("drops an OutputChunk storm and every other narration tag, including a clean TreeValidated", () => {
-    const state = applyEvents(emptyRunState(), narrationEvents())
-    expect(buildRows(state, undefined, "essential")).toHaveLength(0)
+  it("keeps OutputChunk but drops every other narration tag by default, including a clean TreeValidated", () => {
+    const rows = rowsOf(...narrationEvents)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.event.payload._tag).toBe("OutputChunk")
   })
 
   it("keeps every tag the run's spine depends on", () => {
@@ -368,42 +367,17 @@ describe("buildRows — stream mode", () => {
       expect(tagsShown, `${e.payload._tag} missing from the essential stream`).toContain(e.payload._tag)
   })
 
-  it("shows every narration tag in full mode, one row per event — byte-identical to today's output", () => {
-    const events = narrationEvents()
-    const state = applyEvents(emptyRunState(), events)
-    const rows = buildRows(state, undefined, "full")
-    expect(rows.map((r) => r.event.payload._tag)).toEqual(events.map((e) => e.payload._tag))
-  })
-
-  it("still hides run/block bookkeeping in full mode — HIDDEN applies regardless of mode", () => {
-    const rows = buildRows(
-      applyEvents(emptyRunState(), [
-        ev({ _tag: "RunCreated", projectId: "p", prompt: "x" }),
-        ev({ _tag: "RunStarted" }),
-        ev({ _tag: "BlockStarted", defId: "codex", kind: "agent" }, "explore"),
-        ev({ _tag: "BlockFinished", status: "succeeded" }, "explore"),
-      ]),
-      undefined,
-      "full",
-    )
-    expect(rows).toHaveLength(0)
-  })
-
-  it("defaults to essential mode when none is given", () => {
-    expect(rowsOf(ev({ _tag: "OutputChunk", streamKind: "stdout", excerpt: "x" }))).toHaveLength(0)
+  it("shows every narration tag in full mode, one row per event", () => {
+    const rows = fullRowsOf(...narrationEvents)
+    expect(rows.map((r) => r.event.payload._tag)).toEqual(narrationEvents.map((e) => e.payload._tag))
   })
 })
 
 describe("filterRows", () => {
   it("keeps only the selected block's rows and restores everything on clear", () => {
-    // Full mode: filtering by block is orthogonal to which mode's hidden set applies.
-    const rows = buildRows(
-      applyEvents(emptyRunState(), [
-        ev({ _tag: "SessionStarted", sessionId: "a" }, "explore", "at1"),
-        ev({ _tag: "SessionStarted", sessionId: "b" }, "implement", "at2"),
-      ]),
-      undefined,
-      "full",
+    const rows = fullRowsOf(
+      ev({ _tag: "SessionStarted", sessionId: "a" }, "explore", "at1"),
+      ev({ _tag: "SessionStarted", sessionId: "b" }, "implement", "at2"),
     )
     expect(filterRows(rows, "implement")).toHaveLength(1)
     expect(filterRows(rows, null)).toHaveLength(2)

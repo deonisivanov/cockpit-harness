@@ -22,7 +22,6 @@ test("boots with three panels and a populated stream", async ({ page }) => {
   await expect(rows.filter({ hasText: "rg -n reconnect" }).first()).toBeVisible()
   await expect(page.getByTestId("attempt-header").first()).toBeVisible()
 
-  // Essential mode hides session narration by default; the toggle reveals it.
   await expect(rows.filter({ hasText: "session started" })).toHaveCount(0)
   await page.getByTestId("stream-mode").click()
   await expect(rows.filter({ hasText: "session started" }).first()).toBeVisible()
@@ -273,7 +272,7 @@ test("a question row takes an answer", async ({ page }) => {
 
 test("expanders render ANSI output and a unified diff", async ({ page }) => {
   await page.goto("/?mock=retry")
-  // Raw output and artifact rows are essential-mode narration; switch to full log to reach them.
+  // Artifact rows are essential-mode narration; switch to full log to reach the diff.
   await page.getByTestId("stream-mode").click()
 
   await page.locator('[data-testid=event-row][data-tag=stdout]').first().click()

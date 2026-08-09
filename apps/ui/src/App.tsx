@@ -508,7 +508,10 @@ export default function App() {
                   filter={selectedBlock}
                   onClearFilter={() => setSelectedBlock(null)}
                   mode={streamMode}
-                  onModeChange={setStreamMode}
+                  onModeChange={(m) => {
+                    setStreamMode(m)
+                    setFocus(-1)
+                  }}
                   focus={focus}
                   onFocus={setFocus}
                   expanded={expanded}
