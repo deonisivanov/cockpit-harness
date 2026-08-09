@@ -41,6 +41,7 @@ re-executing anything the journal already completed.
 | [`overview.md`](overview.md) | What Cockpit does: capabilities one by one, the main user scenarios, and the explicit v1 limitations. |
 | [`architecture.md`](architecture.md) | Layer map, every source file and its responsibility, data flow, key entities, SQLite schema, and diagrams. |
 | [`setup.md`](setup.md) | Requirements, install, the complete environment-variable list, and how to give a new project a cartridge. |
+| [`new-project.md`](new-project.md) | The walkthrough: fresh machine → install → register a project → cartridge decision → first run, and what transfers between machines. |
 | [`run.md`](run.md) | Every real command in the repo: build, dev, test, e2e, lint, the UI mock harness, boot verification, and CI. |
 | [`conventions.md`](conventions.md) | The rules this codebase actually lives by, plus how to add a service, a cartridge, an API route or an event type. |
 | [`troubleshooting.md`](troubleshooting.md) | Real failure modes with the exact messages they produce and what each one means. |

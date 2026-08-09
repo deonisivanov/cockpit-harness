@@ -218,14 +218,59 @@ const PARA_STYLE: Record<ProsePara["kind"], string> = {
   k: "font-mono text-[11.5px] leading-[1.6] text-[#8f8f9c]",
 }
 
+const PROSE_TEXT = "font-sans text-[13.5px] leading-[1.72] text-[#c9c9d6] [text-wrap:pretty]"
+
+/** Agent prose arrives as markdown; these keep the reference typography instead of mono. */
+const PROSE_MD_COMPONENTS = {
+  p: (p: { children?: React.ReactNode }) => <p className={`${PROSE_TEXT} py-0.5`}>{p.children}</p>,
+  strong: (p: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-[#e4e4ec]">{p.children}</strong>
+  ),
+  h1: (p: { children?: React.ReactNode }) => (
+    <div className="pb-0.5 font-sans text-[14px] font-semibold text-[#e4e4ec]">{p.children}</div>
+  ),
+  h2: (p: { children?: React.ReactNode }) => (
+    <div className="pb-0.5 font-sans text-[13.5px] font-semibold text-[#e4e4ec]">{p.children}</div>
+  ),
+  h3: (p: { children?: React.ReactNode }) => (
+    <div className="pb-0.5 font-sans text-[13.5px] font-semibold text-[#e4e4ec]">{p.children}</div>
+  ),
+  ul: (p: { children?: React.ReactNode }) => (
+    <ul className="list-disc space-y-1 py-0.5 pl-5 marker:text-ink-4">{p.children}</ul>
+  ),
+  ol: (p: { children?: React.ReactNode }) => (
+    <ol className="list-decimal space-y-1 py-0.5 pl-5 marker:text-ink-4">{p.children}</ol>
+  ),
+  li: (p: { children?: React.ReactNode }) => <li className={PROSE_TEXT}>{p.children}</li>,
+  code: (p: { children?: React.ReactNode }) => (
+    <code className="font-mono text-[12px] text-amber">{p.children}</code>
+  ),
+  pre: (p: { children?: React.ReactNode }) => (
+    <pre className="overflow-x-auto rounded-md border border-white/9 bg-code px-3 py-2.5 font-mono text-[11.5px] leading-[1.75] whitespace-pre-wrap text-ink-2">
+      {p.children}
+    </pre>
+  ),
+  a: (p: { children?: React.ReactNode; href?: string }) => (
+    <a href={p.href} className="text-vio-hi">
+      {p.children}
+    </a>
+  ),
+}
+
 export function ProseParas({ paras }: { paras: readonly ProsePara[] }) {
   return (
     <>
-      {paras.map((para, i) => (
-        <div key={i} className={PARA_STYLE[para.kind]}>
-          {para.kind === "b" ? `—  ${para.text}` : para.text}
-        </div>
-      ))}
+      {paras.map((para, i) =>
+        para.kind === "p" ? (
+          <div key={i} className="[text-wrap:pretty]">
+            <ReactMarkdown components={PROSE_MD_COMPONENTS}>{para.text}</ReactMarkdown>
+          </div>
+        ) : (
+          <div key={i} className={PARA_STYLE[para.kind]}>
+            {para.kind === "b" ? `—  ${para.text}` : para.text}
+          </div>
+        ),
+      )}
     </>
   )
 }

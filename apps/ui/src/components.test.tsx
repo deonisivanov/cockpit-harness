@@ -277,6 +277,23 @@ describe("result prose", () => {
     const html = renderToStaticMarkup(<ProseBox paras={[]} />)
     expect(html).toContain("No textual result was reported.")
   })
+
+  it("renders prose paragraphs as markdown, not raw asterisks", () => {
+    const html = renderToStaticMarkup(
+      <ProseBox
+        paras={[
+          {
+            kind: "p",
+            text: "Работает так:\n\n1. **Основное окно** — ввод вопроса\n2. **Ответ стримится** — токен за токеном",
+          },
+        ]}
+      />,
+    )
+    expect(html).toContain("<strong")
+    expect(html).toContain("<ol")
+    expect(html).toContain("Основное окно")
+    expect(html).not.toContain("**")
+  })
 })
 
 describe("attachments", () => {
